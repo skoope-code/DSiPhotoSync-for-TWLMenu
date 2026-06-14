@@ -1,0 +1,20 @@
+# devkitPro / devkitARM build output
+build/
+*.nds
+*.elf
+*.arm9
+*.arm7
+*.bin
+*.map
+
+# Generated banner/icon intermediates
+*.bnr
+
+# macOS
+.DS_Store
+
+# Editor/IDE
+*.swp
+*~
+.vscode/
+.idea/
