@@ -68,3 +68,4 @@ photo (one-tap "Sync") without going through the Add list.
   (public domain, vendored), reading the file as a stream so it never loads a
   whole image into RAM at once. Hover previews decode in picojpeg's reduce
   mode (1/8 each axis) so scrolling stays responsive.
+- **Compiled with** [devkitPro](https://github.com/devkitPro/libnds)
