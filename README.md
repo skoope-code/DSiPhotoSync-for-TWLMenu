@@ -8,7 +8,8 @@ A tiny Nintendo DSi homebrew app that restores the stock top screen slide show o
 setup. 
 > DISCLAIMER: This app is not affiliated with TWiLightMenu++ in any way.
 
-It scans the SD card's `DCIM` folder (where the DSi camera writes JPEGs when
+## What this app does
+When opened, the app scans the SD card's `DCIM` folder (where the DSi camera writes JPEGs when
 you shoot to SD), decodes each photo, downscales it to fit TWiLight's
 top-screen photo limit (208×156 max), and writes a PNG into:
 
@@ -66,7 +67,7 @@ is instant.
 ### Quick mode
 
 Turn **Quick mode** on in Settings and the app changes its boot behaviour: on
-launch it immediately syncs every new photo, shows a single "Syncing…" line
+launch it immediately syncs every new photo, showing a single "Syncing…" line
 while it works, then exits straight back to TWiLight Menu++ — no menu, no
 browsing. It's the grab-and-go option for "I just took some photos, put them
 on the carousel."
