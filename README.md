@@ -1,3 +1,6 @@
+<img width="1280" height="640" alt="Group 21-2" src="https://github.com/user-attachments/assets/37923b9f-3eb0-42a6-8da0-f541c31af28b" />
+
+
 # DSiPhotoSync for TWiLight Menu++
 
 A tiny Nintendo DSi homebrew app that restores the stock *"your camera photos
