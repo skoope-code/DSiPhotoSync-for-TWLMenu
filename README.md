@@ -1,11 +1,11 @@
-<img width="1280" height="640" alt="Group 21-2" src="https://github.com/user-attachments/assets/37923b9f-3eb0-42a6-8da0-f541c31af28b" />
+<img width="1280" height="334" alt="Group 21-3" src="https://github.com/user-attachments/assets/d81a0f1d-e561-4a24-ad9d-66839e0acad4" />
+
 
 
 # DSiPhotoSync for TWiLight Menu++
 
-A tiny Nintendo DSi homebrew app that restores the stock *"your camera photos
-cycle on the top screen"* whimsy on a [TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu)
-setup.
+A tiny Nintendo DSi homebrew app that restores the stock top-screen slide show on a [TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu)
+setup. DISCLAIMER: This app is in no way affiliated with TWiLightMenu++
 
 It scans the SD card's `DCIM` folder (where the DSi camera writes JPEGs when
 you shoot to SD), decodes each photo, downscales it to fit TWiLight's
