@@ -4,21 +4,15 @@
 
 # DSiPhotoSync for TWiLight Menu++
 
-A tiny Nintendo DSi homebrew app that restores the stock top screen slide show on a [TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu)
-setup. 
+A tiny Nintendo DSi homebrew app that restores the stock top screen slideshow functionality on a [TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu) setup. 
 > DISCLAIMER: This app is not affiliated with TWiLightMenu++ in any way.
 
 ## What this app does
-When opened, the app scans the SD card's `DCIM` folder (where the DSi camera writes JPEGs when
-you shoot to SD), decodes each photo, downscales it to fit TWiLight's
-top-screen photo limit (208×156 max), and writes a PNG into:
+Unlike the stock DS menu, TWiLightMenu++ does not source the top screen slideshow photos from the NAND or DCIM folder on the SD. Instead, photos are sourced from the following folder:
 
-    sd:/_nds/TWiLightMenu/dsimenu/photos/
+> sd:/_nds/TWiLightMenu/dsimenu/photos/
 
-…which is the folder TWiLight's `dsimenu` theme auto-cycles on the top screen.
-A photo counts as already synced once its output PNG exists, so each run only
-processes new shots — and deleting a PNG from that folder makes the next run
-regenerate it.
+Additionally, for photos to appear correctly, they must be PNG files that are no larger than 208x156. The DSiWare Camera app shoots JPG files at 640x480. This app seamlessly manages the process of adding DSiWare Camera app photos to the correct folder and making them compliant with TWLMenu's requirements. The end result is that all of your personal photos taken on the DSi will now begin cycling through the top screen.
 
 > **Scope:** this is built for **DSi-taken photos** (640×480, shot to SD).
 > It is not a general camera-photo converter; large phone/DSLR JPEGs are out
@@ -29,28 +23,20 @@ regenerate it.
 
 ## What it does *not* do
 
-- It does **not** read the internal NAND Photo app store (those are stored in
-  the encrypted DSi photo format). Shoot to SD so the JPEGs land in `DCIM`.
+- It does **not** read the internal NAND Photo app store. Shoot to SD so the JPEGs land in `DCIM`.
 - It does **not** delete or alter your original photos. Removing a photo only
   deletes the generated PNG from the slideshow folder; the original JPEG stays
   put, so anything you remove can be added back later.
 
 ## Using the app
 
-When launched, DSiPhotoSync shows a menu on the bottom screen. The top screen
-shows a "Riddle of the day" while you're in the menus and list views, and
-switches to a full controls legend when you're browsing a grid.
+When launched, DSiPhotoSync shows a menu with three options:
 
-The menu has three items:
+- **Add photos** — pick which new JPEGs to sync (all checked by default).
+- **View gallery** — browse, view, or remove already-synced photos.
+- **Settings** — set your default view and toggle [Quick mode](line 61).
 
-- **Add photos** — pick which new JPEGs to sync (all checked by default),
-  then **START** to sync the checked ones.
-- **View gallery** — browse already-synced photos; expand one full screen,
-  remove one, or remove all.
-- **Settings** — set your default view and toggle Quick mode.
-
-From the menu, press **START** at any time to instantly sync every new photo
-(one-tap "Sync new") without going through the Add list.
+> From the main menu, you can also press **START** at any time to sync every new photo without going through the Add list.
 
 ### List view and grid view
 
@@ -60,9 +46,7 @@ switch between them at any time with **SELECT**:
 - **List view** — one photo per row with a preview on the right.
 - **Grid view** — a 3×2 grid of thumbnails per page.
 
-Which one opens first is set by **Default view** in Settings. Thumbnails load
-progressively in the background, and recently seen pages stay cached so paging
-is instant.
+Which one opens first is set by **Default view** in Settings.
 
 ### Quick mode
 
@@ -73,6 +57,9 @@ browsing. It's the grab-and-go option for "I just took some photos, put them
 on the carousel."
 
 To get the normal menu while Quick mode is on, **hold SELECT during boot**.
+
+> Optional: make it feel as close to stock as possible
+>TWiLight can launch a `.nds` on boot, or you can just run DSiPhotoSync whenever you've taken new pics. I am currently not aware of any way to >hook "on camera photo taken," so a quick manual launch (or boot-launch) is as close to the stock auto-cycle as homebrew can get. Pairing a boot->launch with **Quick mode** gets you closest: power on, photos sync, you're back at the menu.
 
 ## Controls
 
@@ -111,20 +98,14 @@ To get the normal menu while Quick mode is on, **hold SELECT during boot**.
 An asterisk (`*`) appears next to any setting you've changed since opening the
 screen, so it's clear what will be saved.
 
-**Boot**
-- **Hold SELECT** — skip Quick mode and open the normal menu (only relevant
-  when Quick mode is on)
+## Settings file
 
-Synced photos are written to `sd:/_nds/TWiLightMenu/dsimenu/photos/` at 208×156,
-and the dsimenu theme cycles them on the top screen.
+Settings are stored on the SD card at:
 
-## Optional: make it feel automatic
+    sd:/_nds/TWiLightMenu/dsimenu/dsiphotosync.ini
 
-TWiLight can launch a `.nds` on boot, or you can just run DSiPhotoSync whenever
-you've taken new pics. There's no DSi API to hook "on camera photo taken," so a
-quick manual launch (or boot-launch) is as close to the stock auto-cycle as
-homebrew can get. Pairing a boot-launch with **Quick mode** gets you closest:
-power on, photos sync, you're back at the menu.
+It holds two keys — `default_grid` (0 = list, 1 = grid) and `quick_mode`
+(0 = off, 1 = on) — and is recreated with defaults if missing.
 
 ## How it works (implementation notes)
 
@@ -137,11 +118,6 @@ power on, photos sync, you're back at the menu.
   (uncompressed) deflate blocks — larger on disk than a typical PNG, but valid
   and fast to write on-device. The byte format is validated against a standard
   PNG decoder.
-- **Output size** is held to **208×156** because TWiLight renders larger
-  top-screen images as black.
-- **Both LCDs** are used: the bottom screen is the interactive UI, and the top
-  screen shows the riddle (in menus / list views) or the controls legend (in
-  grid views).
 - **Thumbnails** are cached in a sliding window (a set kept around the photo
   you're viewing) and decoded a little at a time per frame, so opening a grid
   and paging through it never stalls input.
@@ -167,15 +143,6 @@ power on, photos sync, you're back at the menu.
     ├── picojpeg.c      # JPEG decoder (public domain, vendored)
     └── picojpeg.h
 ```
-
-## Settings file
-
-Settings are stored on the SD card at:
-
-    sd:/_nds/TWiLightMenu/dsimenu/dsiphotosync.ini
-
-It holds two keys — `default_grid` (0 = list, 1 = grid) and `quick_mode`
-(0 = off, 1 = on) — and is recreated with defaults if missing.
 
 ## App icon and title
 
