@@ -21,7 +21,7 @@ This is great as it allows you to add custom photos to the top screen as you ple
 > It is not a general camera-photo converter; large phone/DSLR JPEGs are out
 > of scope and oversized files are skipped.
 
-**The Result** All of your personal photos taken on the DSi will now begin cycling through the top screen just as they do on the stock menu.
+**The Result:** All of your personal photos taken on the DSi will now begin cycling through the top screen just as they do on the stock menu.
 
 <img width="1280" height="523" alt="Group 23-4" src="https://github.com/user-attachments/assets/f5ba2db1-be8c-4119-b251-f5edbd6394ac" />
 
