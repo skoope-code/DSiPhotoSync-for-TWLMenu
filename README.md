@@ -4,8 +4,8 @@
 
 # DSiPhotoSync for TWiLight Menu++
 
-A tiny Nintendo DSi homebrew app that restores the stock top-screen slide show on a [TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu)
-setup. DISCLAIMER: This app is in no way affiliated with TWiLightMenu++
+A tiny Nintendo DSi homebrew app that restores the stock top screen slide show on a [TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu)
+setup. DISCLAIMER: This app is not affiliated with TWiLightMenu++ in any way.
 
 It scans the SD card's `DCIM` folder (where the DSi camera writes JPEGs when
 you shoot to SD), decodes each photo, downscales it to fit TWiLight's
