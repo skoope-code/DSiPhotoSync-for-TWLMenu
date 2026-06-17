@@ -4,15 +4,19 @@
 
 # DSiPhotoSync for TWiLight Menu++
 
-A tiny Nintendo DSi homebrew app that restores the stock top screen slideshow functionality on a [TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu) setup. 
+A tiny Nintendo DSi homebrew app that attempts to restore the seamless feel of the stock top screen slideshow functionality on a modded DSi system ([TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu)). 
 > DISCLAIMER: This app is not affiliated with TWiLightMenu++ in any way.
 
 ## What this app does
-Unlike the stock DS menu, TWiLightMenu++ does not source the top screen slideshow photos from the NAND or DCIM folder on the SD. Instead, photos are sourced from the following folder:
+Unlike the stock DS menu, TWiLightMenu++ does not source the top screen slideshow photos from the NAND or DCIM folder on the SD. Instead, photos are sourced from the following subfolder:
 
     sd:/_nds/TWiLightMenu/dsimenu/photos/
 
-Additionally, for photos to appear correctly, they must be PNG files that are no larger than 208x156. The DSiWare Camera app shoots JPG files at 640x480. This app seamlessly manages the process of adding DSiWare Camera app photos to the correct folder and making them compliant with TWLMenu's requirements. The end result is that all of your personal photos taken on the DSi will now begin cycling through the top screen.
+This is great as it allows you to add custom photos to the top screen as you please. However, this requires accessing your SD card and manually moving files. Additionally, for photos to appear correctly, they must be PNG files that are no larger than 208x156. 
+
+**The Problem:** The DSiWare Camera app shoots JPG files at 640x480. This makes it a hassle to add photos you've taken on your DSi to the top screen photo placeholder and is one way that a modded DSi falls short of the stock experience.
+
+**The Solution:** This app allows you to quickly convert your DSiWare Camera app photos to meet TWLMenu's requirments and add them to the correct subfolder. The end result is that all of your personal photos taken on the DSi will now begin cycling through the top screen just as they do on the stock menu.
 
 > **Scope:** this is built for **DSi-taken photos** (640×480, shot to SD).
 > It is not a general camera-photo converter; large phone/DSLR JPEGs are out
