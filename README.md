@@ -16,14 +16,14 @@ This is great as it allows you to add custom photos to the top screen as you ple
 
 **The Problem:** The DSiWare Camera app shoots JPG files at 640x480. This makes it a hassle to add photos you've taken on your DSi to the top screen photo placeholder and is one way that a modded DSi falls short of the stock experience.
 
-**The Solution:** This app allows you to quickly convert your DSiWare Camera app photos to meet TWLMenu's requirments and add them to the correct subfolder. The end result is that all of your personal photos taken on the DSi will now begin cycling through the top screen just as they do on the stock menu.
-
+**The Solution:** This app allows you to quickly convert your DSiWare Camera app photos to meet TWLMenu's requirments and add them to the correct subfolder.
 > **Scope:** this is built for **DSi-taken photos** (640×480, shot to SD).
 > It is not a general camera-photo converter; large phone/DSLR JPEGs are out
 > of scope and oversized files are skipped.
 
-<img width="846" height="523" alt="Group 23-3" src="https://github.com/user-attachments/assets/a53304fd-1ba7-488a-9c82-36b616809959" />
+**The Result** All of your personal photos taken on the DSi will now begin cycling through the top screen just as they do on the stock menu.
 
+<img width="1280" height="523" alt="Group 23-4" src="https://github.com/user-attachments/assets/f5ba2db1-be8c-4119-b251-f5edbd6394ac" />
 
 ## What it does *not* do
 
