@@ -178,5 +178,5 @@ icon. The build converts the icon to the 4bpp BMP that `ndstool` expects.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). picojpeg is public domain (see its header); that
+GPL3 — see [LICENSE](LICENSE). picojpeg is public domain (see its header); that
 dedication is unaffected by this project's license.
