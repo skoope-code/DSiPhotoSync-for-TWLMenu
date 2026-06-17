@@ -10,7 +10,7 @@ A tiny Nintendo DSi homebrew app that restores the stock top screen slideshow fu
 ## What this app does
 Unlike the stock DS menu, TWiLightMenu++ does not source the top screen slideshow photos from the NAND or DCIM folder on the SD. Instead, photos are sourced from the following folder:
 
-> sd:/_nds/TWiLightMenu/dsimenu/photos/
+  sd:/_nds/TWiLightMenu/dsimenu/photos/
 
 Additionally, for photos to appear correctly, they must be PNG files that are no larger than 208x156. The DSiWare Camera app shoots JPG files at 640x480. This app seamlessly manages the process of adding DSiWare Camera app photos to the correct folder and making them compliant with TWLMenu's requirements. The end result is that all of your personal photos taken on the DSi will now begin cycling through the top screen.
 
