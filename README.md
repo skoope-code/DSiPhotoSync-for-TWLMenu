@@ -7,9 +7,6 @@
 A tiny Nintendo DSi homebrew app that restores the stock top-screen slide show on a [TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu)
 setup. DISCLAIMER: This app is in no way affiliated with TWiLightMenu++
 
-<img width="846" height="523" alt="Group 23" src="https://github.com/user-attachments/assets/083a1379-9381-466d-8f1b-b84154fbbe67" />
-
-
 It scans the SD card's `DCIM` folder (where the DSi camera writes JPEGs when
 you shoot to SD), decodes each photo, downscales it to fit TWiLight's
 top-screen photo limit (208×156 max), and writes a PNG into:
@@ -24,6 +21,9 @@ regenerate it.
 > **Scope:** this is built for **DSi-taken photos** (640×480, shot to SD).
 > It is not a general camera-photo converter; large phone/DSLR JPEGs are out
 > of scope and oversized files are skipped.
+
+<img width="846" height="523" alt="Group 23-3" src="https://github.com/user-attachments/assets/a53304fd-1ba7-488a-9c82-36b616809959" />
+
 
 ## What it does *not* do
 
