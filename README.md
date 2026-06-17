@@ -24,7 +24,7 @@ This is great as it allows you to add custom photos to the top screen as you ple
 
 **The Result:** All of your personal photos taken on the DSi will now begin cycling through the top screen just as they do on the stock menu.
 
-<img width="1280" height="523" alt="Group 23-4" src="https://github.com/user-attachments/assets/f5ba2db1-be8c-4119-b251-f5edbd6394ac" />
+<img width="1280" height="523" alt="Group 23-5" src="https://github.com/user-attachments/assets/e05a9cbd-c0f3-4ede-a233-1b9028cde118" />
 
 ## What it does *not* do
 
