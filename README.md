@@ -1,47 +1,48 @@
-<img width="1280" height="334" alt="Group 21-3" src="https://github.com/user-attachments/assets/d81a0f1d-e561-4a24-ad9d-66839e0acad4" />
-
-
-
 # DSiPhotoSync for TWiLight Menu++
 
-A tiny Nintendo DSi homebrew app that attempts to restore the seamless feel of the stock top screen slideshow functionality on a modded DSi system ([TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu)). 
-> DISCLAIMER: This app is not affiliated with TWiLightMenu++ in any way.
+A tiny Nintendo DSi homebrew app that restores the stock *"your camera photos
+cycle on the top screen"* whimsy on a [TWiLight Menu++](https://github.com/DS-Homebrew/TWiLightMenu)
+setup.
 
-## What this app does
-
-Unlike the stock DS menu, TWiLightMenu++ does not source the top screen slideshow photos from the NAND or DCIM folder on the SD. Instead, photos are sourced from the following subfolder:
+It scans the SD card's `DCIM` folder (where the DSi camera writes JPEGs when
+you shoot to SD), decodes each photo, downscales it to fit TWiLight's
+top-screen photo limit (208×156 max), and writes a PNG into:
 
     sd:/_nds/TWiLightMenu/dsimenu/photos/
 
-This is great as it allows you to add custom photos to the top screen as you please. However, this requires accessing your SD card and manually moving files. Additionally, for photos to appear correctly, they must be PNG files that are no larger than 208x156. 
+…which is the folder TWiLight's `dsimenu` theme auto-cycles on the top screen.
+A photo counts as already synced once its output PNG exists, so each run only
+processes new shots — and deleting a PNG from that folder makes the next run
+regenerate it.
 
-**The Problem:** The DSiWare Camera app shoots JPG files at 640x480. This makes it a hassle to add photos you've taken on your DSi to the top screen photo placeholder and is one way that a modded DSi falls short of the stock experience.
-
-**The Solution:** This app allows you to quickly convert your DSiWare Camera app photos to meet TWLMenu's requirments and add them to the correct subfolder.
 > **Scope:** this is built for **DSi-taken photos** (640×480, shot to SD).
 > It is not a general camera-photo converter; large phone/DSLR JPEGs are out
 > of scope and oversized files are skipped.
 
-**The Result:** All of your personal photos taken on the DSi will now begin cycling through the top screen just as they do on the stock menu.
-
-<img width="1280" height="523" alt="Group 23-5" src="https://github.com/user-attachments/assets/e05a9cbd-c0f3-4ede-a233-1b9028cde118" />
-
 ## What it does *not* do
 
-- It does **not** read the internal NAND Photo app store. Shoot to SD so the JPEGs land in `DCIM`.
+- It does **not** read the internal NAND Photo app store (those are stored in
+  the encrypted DSi photo format). Shoot to SD so the JPEGs land in `DCIM`.
 - It does **not** delete or alter your original photos. Removing a photo only
   deletes the generated PNG from the slideshow folder; the original JPEG stays
   put, so anything you remove can be added back later.
 
 ## Using the app
 
-When launched, DSiPhotoSync shows a menu with three options:
+When launched, DSiPhotoSync shows a menu on the bottom screen. The top screen
+shows a "Riddle of the day" while you're in the menus and list views, and
+switches to a full controls legend when you're browsing a grid.
 
-- **Add photos** — pick which new JPEGs to sync (all checked by default).
-- **View gallery** — browse, view, or remove already-synced photos.
-- **Settings** — set your default view and toggle [Quick mode](line 61).
+The menu has three items:
 
-> From the main menu, you can also press **START** at any time to sync every new photo without going through the Add list.
+- **Add photos** — pick which new JPEGs to sync (all checked by default),
+  then **START** to sync the checked ones.
+- **View gallery** — browse already-synced photos; expand one full screen,
+  remove one, or remove all.
+- **Settings** — set your default view and toggle Quick mode.
+
+From the menu, press **START** at any time to instantly sync every new photo
+(one-tap "Sync new") without going through the Add list.
 
 ### List view and grid view
 
@@ -51,20 +52,19 @@ switch between them at any time with **SELECT**:
 - **List view** — one photo per row with a preview on the right.
 - **Grid view** — a 3×2 grid of thumbnails per page.
 
-Which one opens first is set by **Default view** in Settings.
+Which one opens first is set by **Default view** in Settings. Thumbnails load
+progressively in the background, and recently seen pages stay cached so paging
+is instant.
 
 ### Quick mode
 
 Turn **Quick mode** on in Settings and the app changes its boot behaviour: on
-launch it immediately syncs every new photo, showing a single "Syncing…" line
+launch it immediately syncs every new photo, shows a single "Syncing…" line
 while it works, then exits straight back to TWiLight Menu++ — no menu, no
 browsing. It's the grab-and-go option for "I just took some photos, put them
 on the carousel."
 
 To get the normal menu while Quick mode is on, **hold SELECT during boot**.
-
-> Optional: make it feel as close to stock as possible
->TWiLight can launch a `.nds` on boot, or you can just run DSiPhotoSync whenever you've taken new pics. I am currently not aware of any way to >hook "on camera photo taken," so a quick manual launch (or boot-launch) is as close to the stock auto-cycle as homebrew can get. Pairing a boot->launch with **Quick mode** gets you closest: power on, photos sync, you're back at the menu.
 
 ## Controls
 
@@ -103,14 +103,20 @@ To get the normal menu while Quick mode is on, **hold SELECT during boot**.
 An asterisk (`*`) appears next to any setting you've changed since opening the
 screen, so it's clear what will be saved.
 
-## Settings file
+**Boot**
+- **Hold SELECT** — skip Quick mode and open the normal menu (only relevant
+  when Quick mode is on)
 
-Settings are stored on the SD card at:
+Synced photos are written to `sd:/_nds/TWiLightMenu/dsimenu/photos/` at 208×156,
+and the dsimenu theme cycles them on the top screen.
 
-    sd:/_nds/TWiLightMenu/dsimenu/dsiphotosync.ini
+## Optional: make it feel automatic
 
-It holds two keys — `default_grid` (0 = list, 1 = grid) and `quick_mode`
-(0 = off, 1 = on) — and is recreated with defaults if missing.
+TWiLight can launch a `.nds` on boot, or you can just run DSiPhotoSync whenever
+you've taken new pics. There's no DSi API to hook "on camera photo taken," so a
+quick manual launch (or boot-launch) is as close to the stock auto-cycle as
+homebrew can get. Pairing a boot-launch with **Quick mode** gets you closest:
+power on, photos sync, you're back at the menu.
 
 ## How it works (implementation notes)
 
@@ -123,6 +129,11 @@ It holds two keys — `default_grid` (0 = list, 1 = grid) and `quick_mode`
   (uncompressed) deflate blocks — larger on disk than a typical PNG, but valid
   and fast to write on-device. The byte format is validated against a standard
   PNG decoder.
+- **Output size** is held to **208×156** because TWiLight renders larger
+  top-screen images as black.
+- **Both LCDs** are used: the bottom screen is the interactive UI, and the top
+  screen shows the riddle (in menus / list views) or the controls legend (in
+  grid views).
 - **Thumbnails** are cached in a sliding window (a set kept around the photo
   you're viewing) and decoded a little at a time per frame, so opening a grid
   and paging through it never stalls input.
@@ -149,6 +160,15 @@ It holds two keys — `default_grid` (0 = list, 1 = grid) and `quick_mode`
     └── picojpeg.h
 ```
 
+## Settings file
+
+Settings are stored on the SD card at:
+
+    sd:/_nds/TWiLightMenu/dsimenu/dsiphotosync.ini
+
+It holds two keys — `default_grid` (0 = list, 1 = grid) and `quick_mode`
+(0 = off, 1 = on) — and is recreated with defaults if missing.
+
 ## App icon and title
 
 The icon and the three lines of title text under it are set in the `Makefile`
@@ -158,5 +178,5 @@ icon. The build converts the icon to the 4bpp BMP that `ndstool` expects.
 
 ## License
 
-GPL3 — see [LICENSE](LICENSE). picojpeg is public domain (see its header); that
+MIT — see [LICENSE](LICENSE). picojpeg is public domain (see its header); that
 dedication is unaffected by this project's license.
