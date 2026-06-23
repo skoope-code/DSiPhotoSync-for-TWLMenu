@@ -1,4 +1,4 @@
-main.o: /Users/mariocostantini/Downloads/dsiphotosync-66/source/main.c \
+main.o: /Users/mariocostantini/Downloads/dsiphotosync-80/source/main.c \
  /opt/devkitpro/libnds/include/nds.h \
  /opt/devkitpro/calico/include/calico.h \
  /opt/devkitpro/calico/include/calico/types.h \
@@ -114,12 +114,12 @@ main.o: /Users/mariocostantini/Downloads/dsiphotosync-66/source/main.c \
  /opt/devkitpro/libnds/include/nds/arm9/videoGL.h \
  /opt/devkitpro/libnds/include/fat.h /opt/devkitpro/libnds/include/dvm.h \
  /opt/devkitpro/libnds/include/filesystem.h \
- /Users/mariocostantini/Downloads/dsiphotosync-66/source/puff.h \
- /Users/mariocostantini/Downloads/dsiphotosync-66/source/frame_data.h \
- /Users/mariocostantini/Downloads/dsiphotosync-66/source/shoulder_data.h \
- /Users/mariocostantini/Downloads/dsiphotosync-66/source/default_preview_data.h \
- /Users/mariocostantini/Downloads/dsiphotosync-66/source/picojpeg.h \
- /Users/mariocostantini/Downloads/dsiphotosync-66/source/font6x8.h
+ /Users/mariocostantini/Downloads/dsiphotosync-80/source/puff.h \
+ /Users/mariocostantini/Downloads/dsiphotosync-80/source/frame_data.h \
+ /Users/mariocostantini/Downloads/dsiphotosync-80/source/shoulder_data.h \
+ /Users/mariocostantini/Downloads/dsiphotosync-80/source/default_preview_data.h \
+ /Users/mariocostantini/Downloads/dsiphotosync-80/source/picojpeg.h \
+ /Users/mariocostantini/Downloads/dsiphotosync-80/source/font6x8.h
 /opt/devkitpro/libnds/include/nds.h:
 /opt/devkitpro/calico/include/calico.h:
 /opt/devkitpro/calico/include/calico/types.h:
@@ -236,9 +236,9 @@ main.o: /Users/mariocostantini/Downloads/dsiphotosync-66/source/main.c \
 /opt/devkitpro/libnds/include/fat.h:
 /opt/devkitpro/libnds/include/dvm.h:
 /opt/devkitpro/libnds/include/filesystem.h:
-/Users/mariocostantini/Downloads/dsiphotosync-66/source/puff.h:
-/Users/mariocostantini/Downloads/dsiphotosync-66/source/frame_data.h:
-/Users/mariocostantini/Downloads/dsiphotosync-66/source/shoulder_data.h:
-/Users/mariocostantini/Downloads/dsiphotosync-66/source/default_preview_data.h:
-/Users/mariocostantini/Downloads/dsiphotosync-66/source/picojpeg.h:
-/Users/mariocostantini/Downloads/dsiphotosync-66/source/font6x8.h:
+/Users/mariocostantini/Downloads/dsiphotosync-80/source/puff.h:
+/Users/mariocostantini/Downloads/dsiphotosync-80/source/frame_data.h:
+/Users/mariocostantini/Downloads/dsiphotosync-80/source/shoulder_data.h:
+/Users/mariocostantini/Downloads/dsiphotosync-80/source/default_preview_data.h:
+/Users/mariocostantini/Downloads/dsiphotosync-80/source/picojpeg.h:
+/Users/mariocostantini/Downloads/dsiphotosync-80/source/font6x8.h:
