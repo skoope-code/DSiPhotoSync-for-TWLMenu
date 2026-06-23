@@ -29,6 +29,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <time.h>
 
 #include "puff.h"   /* tiny inflate, for reading compressed theme PNGs */
@@ -70,6 +71,7 @@
 #define ERR_FILE_READ    203
 #define ERR_PNG_WRITE    204
 #define ERR_TOO_BIG      205   // full-res decode would exceed the RAM budget
+#define ERR_MKDIR        206   // output photos folder missing and couldn't be made
 static int g_last_err = 0;
 
 // Max pixels we'll decode at full resolution. W*H*3 bytes are allocated for the
@@ -91,8 +93,8 @@ static const Riddle g_riddles[] = {
     { "What has an eye but cannot see?",          "A needle." },
     { "What has teeth but cannot bite?",          "A comb." },
     { "What runs but never walks?",               "Water." },
-    { "The more you take, the more you leave.",   "Footsteps." },
-    { "What can travel the world staying in?",     "A stamp." },
+    { "The more you take, the more you leave behind. What are they?", "Footsteps." },
+    { "What can travel the world while staying in one corner?",     "A stamp." },
     { "What has one foot but four legs?",         "A bed." },
     { "What gets bigger the more you take away?", "A hole." },
     { "What has words but never speaks?",         "A book." },
@@ -650,6 +652,18 @@ static void make_out_name(const char *subdir, const char *file, char *out, int o
         if (*p == '.' && strcasecmp(p, ".png") != 0) *p = '_';
 }
 
+// Ensure the photo output folder (and its parent chain) exists. mkdir on an
+// existing directory just returns EEXIST, so this is safe to call repeatedly.
+// Returns 1 if the folder exists (or was created) and is a directory, else 0.
+static int ensure_photos_dir(void) {
+    mkdir("sd:/_nds", 0777);
+    mkdir("sd:/_nds/TWiLightMenu", 0777);
+    mkdir("sd:/_nds/TWiLightMenu/dsimenu", 0777);
+    mkdir(PHOTOS_DIR, 0777);
+    struct stat st;
+    return (stat(PHOTOS_DIR, &st) == 0 && S_ISDIR(st.st_mode)) ? 1 : 0;
+}
+
 // Build the full source-JPEG path for a photo entry. Buffer should be >=400
 // to match make_out_name and comfortably hold DCIM + subdir + file.
 static void make_src_path(const char *subdir, const char *file, char *out, int outsz) {
@@ -1113,6 +1127,25 @@ static int grid_preload_window(int *ids, int n, int center, int is_jpeg, int bud
 #define LIST_BAND_Y  (PAGE_Y - 3)
 #define LIST_BAND_H  (INFO_Y + 9 - (PAGE_Y - 3) + 1)
 
+// ---------------------------------------------------------------------------
+// Timing constants. The DS refreshes at ~60 Hz, so these frame counts convert
+// to seconds by dividing by 60 (e.g. 150 frames ~= 2.5 s). Centralized here so
+// the on-screen hold/settle durations are easy to find and tune.
+// ---------------------------------------------------------------------------
+#define KEY_REPEAT_DELAY     12   // frames a direction is held before auto-repeat
+#define KEY_REPEAT_RATE       4   // frames between auto-repeats once repeating
+
+#define QUICK_SYNC_GLIMPSE   45   // "Nothing new to sync" glimpse (~0.75 s)
+#define MENU_MSG_HOLD        70   // "No new photos to sync" menu notice
+#define APPLIED_MSG_HOLD     90   // brief "Applied." confirmation hold (~1.5 s)
+#define CLOSE_MSG_HOLD      120   // "Theme applied / will now close" hold (~2 s)
+#define VARIANT_MSG_HOLD    150   // variant-select "Theme applied." hold (~2.5 s)
+#define BUILD_DONE_HOLD      40   // Theme Builder "Done" hold
+#define BUILD_FAIL_HOLD      60   // Theme Builder "Copy failed." hold
+
+#define PREVIEW_SETTLE        4   // frames of stillness before loading a hover preview
+#define PREWARM_IDLE         30   // frames idle before background-decoding previews
+
 static void draw_header(const char *title, const char *right) {
     fb_text(6, 6, title, COL_HEADER);
     if (right) fb_text(SCR_W - (int)strlen(right) * 6 - 6, 6, right, COL_DIM);
@@ -1190,23 +1223,28 @@ static int fb_pill(int x, int y, const char *label, u16 col, u16 bg) {
 // Footer with up to a few (button, label) hints, e.g.  (A) Select  (SELECT) Exit.
 // `pill` is set for oblong buttons (START/SELECT); otherwise `btn` is a single
 // char drawn as a round face button. `arrows` (when set) draws an up/down pair.
-typedef struct { const char *pill; char btn; const char *label; int arrows; } Hint;
+typedef struct { const char *pill; char btn; const char *label; int arrows; int dim; } Hint;
+
+// A dimmed hint (control not available in the current context) uses a darker
+// glyph fill and label so it reads as present-but-inactive.
+#define COL_HINT_OFF rgb15(70, 70, 78)
 
 // Draw a single hint's glyph at (x, by); returns the glyph width. `arrows` 1 =
 // up/down pair, 2 = left/right pair; otherwise a pill or round button.
 static int draw_hint_glyph(int x, int by, const Hint *h) {
+    u16 gc = h->dim ? COL_HINT_OFF : COL_BTN;
     if (h->arrows == 1) {
-        int w = fb_button_arrow(x, by, 0, COL_BTN, COL_BG);
-        fb_button_arrow(x + w + 2, by, 1, COL_BTN, COL_BG);
+        int w = fb_button_arrow(x, by, 0, gc, COL_BG);
+        fb_button_arrow(x + w + 2, by, 1, gc, COL_BG);
         return w * 2 + 2;
     }
     if (h->arrows == 2) {
-        int w = fb_button_arrow(x, by, 2, COL_BTN, COL_BG);
-        fb_button_arrow(x + w + 2, by, 3, COL_BTN, COL_BG);
+        int w = fb_button_arrow(x, by, 2, gc, COL_BG);
+        fb_button_arrow(x + w + 2, by, 3, gc, COL_BG);
         return w * 2 + 2;
     }
-    if (h->pill) return fb_pill(x, by, h->pill, COL_BTN, COL_BG);
-    return fb_button(x, by, h->btn, COL_BTN, COL_BG);
+    if (h->pill) return fb_pill(x, by, h->pill, gc, COL_BG);
+    return fb_button(x, by, h->btn, gc, COL_BG);
 }
 
 #define FOOTER_H (BTN_D + 6)             // footer band height
@@ -1220,7 +1258,7 @@ static void draw_footer_hints(const Hint *hints, int count) {
     for (int i = 0; i < count; i++) {
         x += draw_hint_glyph(x, by, &hints[i]);
         x += 4;
-        fb_text(x, ty, hints[i].label, COL_DIM);
+        fb_text(x, ty, hints[i].label, hints[i].dim ? COL_HINT_OFF : COL_DIM);
         x += (int)strlen(hints[i].label) * 6 + 10;
     }
 }
@@ -1543,6 +1581,7 @@ static const char *err_text(int code) {
         case ERR_FILE_OPEN:    return "cannot open file";
         case ERR_FILE_READ:    return "file read error";
         case ERR_PNG_WRITE:    return "cannot write PNG";
+        case ERR_MKDIR:        return "no photos folder";
         case PJPG_NOTENOUGHMEM:return "decoder low memory";
         case PJPG_UNSUPPORTED_MODE: return "progressive JPEG";
         case PJPG_NOT_JPEG:    return "not a JPEG";
@@ -1554,6 +1593,17 @@ static const char *err_text(int code) {
 static void run_conversion(int *ids, int n) {
     draw_chrome("Syncing", NULL, 0);
     fb_text(6, SCR_H - 10, "Working...", COL_DIM);
+
+    // Make sure the output folder exists before writing anything. If TWiLight's
+    // photos folder was never created (or got removed), create it now; abort the
+    // sync cleanly with a clear message if it can't be made.
+    if (!ensure_photos_dir()) {
+        fb_rect(0, 30, SCR_W, 40, COL_BG);
+        fb_text(8, 34, "Could not create the photos folder:", COL_FAIL);
+        fb_text_clip(8, 46, PHOTOS_DIR, COL_DIM, 40);
+        fb_text(8, 58, "Check the SD card and try again.", COL_DIM);
+        return;
+    }
 
     int total = 0;
     for (int i = 0; i < n; i++) if (g_photos[ids[i]].convert) total++;
@@ -1608,7 +1658,7 @@ static int wait_keys(int mask) {
 // Simple full-screen message (SD failure / no photos / etc).
 static void message_screen(const char *l1, const char *l2, const char *l3) {
     draw_chrome("DSiPhotoSync", NULL, 0);
-    Hint h[1] = { { "START", 0, "Exit", 0 } };
+    Hint h[1] = { { "START", 0, "Exit", 0, 0 } };
     draw_footer_hints(h, 1);
     if (l1) fb_text(8, 40, l1, COL_TEXT);
     if (l2) fb_text(8, 54, l2, COL_DIM);
@@ -1699,6 +1749,8 @@ typedef enum { SCREEN_MENU, SCREEN_ADD, SCREEN_LIBRARY,
                SCREEN_THEME_ADJUST,      // pick adjustments (screen 2/2)
                SCREEN_THEME_APPLY,       // pick which variant to apply
                SCREEN_THEME_SETPROMPT,   // after make: set as selected theme?
+               SCREEN_THEME_DELVARIANT,  // confirm: delete this variant?
+               SCREEN_THEME_DELTHEME,    // confirm: delete this whole theme?
                SCREEN_EXIT } Screen;
 
 static int g_unconv[MAX_PHOTOS], g_n_unconv = 0;
@@ -1849,6 +1901,23 @@ static void variant_label(const char *suf, char *out, size_t outsz) {
     snprintf(out, outsz, "%s", buf);
 }
 
+// Abbreviated variant label for the variant-select rows, where the full names
+// ("Photo, Frame, Shadow, L/R") are too wide. Uses the legend codes:
+//   P = Photo, F = Frame, S = Shadow, L/R = L/R Buttons.
+static void variant_label_short(const char *suf, char *out, size_t outsz) {
+    const char *s = suf;
+    const char *dash = strstr(s, " - ");
+    s = dash ? dash + 3 : s;
+    char buf[40]; int n = 0;
+    n += snprintf(buf + n, sizeof(buf) - n, "P");
+    for (const char *c = s; *c; c++) {
+        if (*c == 'f')      n += snprintf(buf + n, sizeof(buf) - n, ", F");
+        else if (*c == 's') n += snprintf(buf + n, sizeof(buf) - n, ", S");
+        else if (*c == 'L') n += snprintf(buf + n, sizeof(buf) - n, ", L/R");
+    }
+    snprintf(out, outsz, "%s", buf);
+}
+
 // Forward declaration (defined later, near the ini helpers).
 static int theme_render_photo(const char *theme_dir);
 
@@ -1910,6 +1979,59 @@ static int copy_file(const char *src, const char *dst) {
 
 // Recursively copy a directory tree (files + subfolders at any depth).
 // Returns 0 on success, -1 on any failure.
+// Recursively delete a directory and all its contents. Returns 0 on success.
+static int delete_dir_recursive(const char *path) {
+    DIR *d = opendir(path);
+    if (!d) return remove(path);   // not a dir (or gone) -- try as a file
+    struct dirent *e;
+    int rc = 0;
+    while ((e = readdir(d))) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+        char p[512];
+        snprintf(p, sizeof(p), "%s/%s", path, e->d_name);
+        struct stat st;
+        if (stat(p, &st) != 0) { rc = -1; continue; }
+        if (S_ISDIR(st.st_mode)) { if (delete_dir_recursive(p) != 0) rc = -1; }
+        else                     { if (remove(p) != 0) rc = -1; }
+    }
+    closedir(d);
+    if (rmdir(path) != 0) rc = -1;
+    return rc;
+}
+
+// Delete one variant folder ("<base><suffix>") of a theme. Returns 0 on success.
+static int delete_variant(const char *base, const char *suffix) {
+    char path[600];
+    snprintf(path, sizeof(path), "%s/%s%s", THEMES_DIR, base, suffix);
+    return delete_dir_recursive(path);
+}
+
+// Delete a whole theme: the original "<base>" folder plus every generated
+// "<base> - ..." variant folder. Returns 0 if all deletions succeeded.
+static int delete_theme_all(const char *base) {
+    int rc = 0;
+    // Remove every variant folder for this base.
+    DIR *d = opendir(THEMES_DIR);
+    if (d) {
+        struct dirent *e;
+        size_t bl = strlen(base);
+        while ((e = readdir(d))) {
+            if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+            // Match "<base>" exactly or "<base> - <variant>".
+            if (strncmp(e->d_name, base, bl) == 0 &&
+                (e->d_name[bl] == '\0' || (e->d_name[bl] == ' '))) {
+                char p[600];
+                snprintf(p, sizeof(p), "%s/%s", THEMES_DIR, e->d_name);
+                struct stat st;
+                if (stat(p, &st) == 0 && S_ISDIR(st.st_mode))
+                    if (delete_dir_recursive(p) != 0) rc = -1;
+            }
+        }
+        closedir(d);
+    }
+    return rc;
+}
+
 static int copy_dir_recursive(const char *src, const char *dst) {
     if (mkdir(dst, 0777) != 0) {
         struct stat st;
@@ -2176,71 +2298,91 @@ static int theme_render_photo(const char *theme_dir) {
 // blit it scaled into the preview pane. Searches background/ first, then the
 // tree. If nothing is found, shows a placeholder. `theme_folder` is the full
 // folder name (may include a variant suffix).
-static void draw_theme_preview(const char *theme_folder) {
+// Multi-entry preview cache (file scope so a background pre-warm can populate it
+// while the user navigates -- the gallery grid uses the same one-per-frame trick).
+// Decoding a 256x192 theme PNG is slow on hardware (tens to hundreds of ms), so
+// each distinct top.png is decoded once and its downscaled pane pixels kept;
+// revisits are an instant blit. Capacity capped with round-robin eviction.
+#define PREV_CACHE_N 32
+static char          g_pcache_path[PREV_CACHE_N][600];
+static unsigned char g_pcache_px[PREV_CACHE_N][PREV_W * PREV_H * 3];
+static int           g_pcache_used[PREV_CACHE_N];
+static int           g_pcache_next = 0;
+
+// Resolve a theme folder's top.png path into `out`. Returns 1 if found.
+static int theme_top_png_path(const char *theme_folder, char *out, size_t outsz) {
     char dir[512];
     snprintf(dir, sizeof(dir), "%s/%s", THEMES_DIR, theme_folder);
+    char cand[600];
+    snprintf(cand, sizeof(cand), "%s/background/top.png", dir);
+    struct stat st;
+    if (stat(cand, &st) == 0) { snprintf(out, outsz, "%s", cand); return 1; }
+    if (find_file(dir, "top.png", cand, sizeof(cand)) == 0) {
+        snprintf(out, outsz, "%s", cand); return 1;
+    }
+    return 0;
+}
 
-    char img[600]; int got = 0;
-    // Always use top.png (the theme's plain top-screen image), background/ first.
-    {
-        char cand[600];
-        snprintf(cand, sizeof(cand), "%s/background/top.png", dir);
-        struct stat st;
-        if (stat(cand, &st) == 0) { snprintf(img, sizeof(img), "%s", cand); got = 1; }
-        else if (find_file(dir, "top.png", cand, sizeof(cand)) == 0) {
-            snprintf(img, sizeof(img), "%s", cand); got = 1;
+static int pcache_find(const char *img) {
+    for (int i = 0; i < PREV_CACHE_N; i++)
+        if (g_pcache_used[i] && strcmp(g_pcache_path[i], img) == 0) return i;
+    return -1;
+}
+
+// Decode `img` into a free/evicted cache slot at pane size. Returns slot or -1.
+// Does not draw. This is the slow call (PNG inflate); everything else is cheap.
+static int pcache_decode(const char *img) {
+    int slot = pcache_find(img);
+    if (slot >= 0) return slot;
+    unsigned char *rgba = NULL; int iw = 0, ih = 0;
+    if (read_png_full(img, &rgba, &iw, &ih) != 0 || !rgba) return -1;
+    unsigned char *rgb = (unsigned char *)malloc((size_t)iw * ih * 3);
+    if (!rgb) { free(rgba); return -1; }
+    for (int i = 0; i < iw * ih; i++) {
+        rgb[i*3+0]=rgba[i*4+0]; rgb[i*3+1]=rgba[i*4+1]; rgb[i*3+2]=rgba[i*4+2];
+    }
+    for (int i = 0; i < PREV_CACHE_N && slot < 0; i++) if (!g_pcache_used[i]) slot = i;
+    if (slot < 0) { slot = g_pcache_next; g_pcache_next = (g_pcache_next + 1) % PREV_CACHE_N; }
+    unsigned char *cpx = g_pcache_px[slot];
+    for (int yy = 0; yy < PREV_H; yy++) {
+        int sy = (int)((long)yy * ih / PREV_H);
+        for (int xx = 0; xx < PREV_W; xx++) {
+            int sx = (int)((long)xx * iw / PREV_W);
+            const unsigned char *s = rgb + ((size_t)sy * iw + sx) * 3;
+            unsigned char *d = cpx + ((size_t)yy * PREV_W + xx) * 3;
+            d[0]=s[0]; d[1]=s[1]; d[2]=s[2];
         }
     }
-    if (!got) {
+    snprintf(g_pcache_path[slot], sizeof(g_pcache_path[slot]), "%s", img);
+    g_pcache_used[slot] = 1;
+    free(rgb); free(rgba);
+    return slot;
+}
+
+static void pcache_blit(int slot) {
+    const unsigned char *cpx = g_pcache_px[slot];
+    for (int yy = 0; yy < PREV_H; yy++)
+        for (int xx = 0; xx < PREV_W; xx++) {
+            const unsigned char *s = cpx + ((size_t)yy * PREV_W + xx) * 3;
+            fb_px(PREV_X + xx, PREV_Y + yy, rgb15(s[0], s[1], s[2]));
+        }
+}
+
+static void draw_theme_preview(const char *theme_folder) {
+    char img[600];
+    if (!theme_top_png_path(theme_folder, img, sizeof(img))) {
         fb_rect(PREV_X, PREV_Y, PREV_W, PREV_H, rgb15(24, 24, 28));
         fb_text(PREV_X + 6, PREV_Y + PREV_H / 2 - 4, "no img", rgb15(140,140,140));
         return;
     }
-
-    // One-entry cache: previews are decoded from a 256x192 PNG (slow), so if the
-    // same image was just decoded, blit the cached pane pixels instead. This
-    // makes scrolling back over themes -- and the variant screen (whose variants
-    // all share one top.png) -- instant.
-    static char cache_path[600] = "";
-    static unsigned char cache_px[PREV_W * PREV_H * 3];
-    static int cache_valid = 0;
-    if (cache_valid && strcmp(cache_path, img) == 0) {
-        for (int yy = 0; yy < PREV_H; yy++)
-            for (int xx = 0; xx < PREV_W; xx++) {
-                const unsigned char *s = cache_px + ((size_t)yy * PREV_W + xx) * 3;
-                fb_px(PREV_X + xx, PREV_Y + yy, rgb15(s[0], s[1], s[2]));
-            }
-        return;
-    }
-
-    unsigned char *rgba = NULL; int iw = 0, ih = 0;
-    if (read_png_full(img, &rgba, &iw, &ih) != 0 || !rgba) {
+    int slot = pcache_find(img);
+    if (slot < 0) slot = pcache_decode(img);   // decode on demand if not pre-warmed
+    if (slot < 0) {
         fb_rect(PREV_X, PREV_Y, PREV_W, PREV_H, rgb15(24, 24, 28));
         fb_text(PREV_X + 6, PREV_Y + PREV_H / 2 - 4, "...", rgb15(140,140,140));
         return;
     }
-    // RGBA -> RGB (preview pane is opaque; drop alpha).
-    unsigned char *rgb = (unsigned char *)malloc((size_t)iw * ih * 3);
-    if (rgb) {
-        for (int i = 0; i < iw * ih; i++) {
-            rgb[i*3+0] = rgba[i*4+0]; rgb[i*3+1] = rgba[i*4+1]; rgb[i*3+2] = rgba[i*4+2];
-        }
-        fb_blit_rgb(rgb, iw, ih, PREV_X, PREV_Y, PREV_W, PREV_H);
-        // Populate the cache by sampling the same downscale into cache_px.
-        for (int yy = 0; yy < PREV_H; yy++) {
-            int sy = (int)((long)yy * ih / PREV_H);
-            for (int xx = 0; xx < PREV_W; xx++) {
-                int sx = (int)((long)xx * iw / PREV_W);
-                const unsigned char *s = rgb + ((size_t)sy * iw + sx) * 3;
-                unsigned char *d = cache_px + ((size_t)yy * PREV_W + xx) * 3;
-                d[0] = s[0]; d[1] = s[1]; d[2] = s[2];
-            }
-        }
-        snprintf(cache_path, sizeof(cache_path), "%s", img);
-        cache_valid = 1;
-        free(rgb);
-    }
-    free(rgba);
+    pcache_blit(slot);
 }
 
 // Draw the embedded "Default theme" preview (a fixed PNG baked into the binary)
@@ -2440,9 +2582,9 @@ static int run_quick_sync(void) {
 
 static void enter_menu_chrome(void) {
     draw_chrome("DSiPhotoSync", NULL, 0);
-    Hint h[3] = { { NULL, 'A', "Select", 0 },
-                  { "START", 0, "Sync new", 0 },
-                  { "SELECT", 0, "Quit", 0 } };
+    Hint h[3] = { { NULL, 'A', "Select", 0, 0 },
+                  { "START", 0, "Sync new", 0, 0 },
+                  { "SELECT", 0, "Quit", 0, 0 } };
     draw_footer_hints(h, 3);
 }
 
@@ -2682,6 +2824,92 @@ static void go_to_menu(Screen *screen, int *menu_sel, int *last_preview_sel,
     *redraw_list = 1;
 }
 
+// Format one themes-list row's label into `out`. `ti` is a theme index, or
+// THEME_DEFAULT_ROW for the pinned Default entry. `page` selects the format
+// (compatible rows show an [X]/[ ] mark + "(count)"; incompatible rows are just
+// the name). `applied_idx` is the base index of the currently-applied theme
+// (-1 = Default applied). Centralizes the row text so the live list and the
+// instant-repaint path can never drift apart.
+static void theme_row_label(int ti, int page, int applied_idx, char *out, size_t outsz) {
+    if (ti == THEME_DEFAULT_ROW) {
+        snprintf(out, outsz, "[%c] Default", applied_idx == -1 ? 'X' : ' ');
+    } else if (page == 0) {
+        int nv = theme_variant_count(&g_themes[ti]) + 1;   // variants + base
+        char nm[30];
+        snprintf(nm, sizeof(nm), "%s", g_themes[ti].name);
+        if ((int)strlen(g_themes[ti].name) > 20) { nm[19]='.'; nm[20]='\0'; }
+        snprintf(out, outsz, "[%c] %s (%d)", ti == applied_idx ? 'X' : ' ', nm, nv);
+    } else {
+        char nm[40];
+        snprintf(nm, sizeof(nm), "%s", g_themes[ti].name);
+        if ((int)strlen(g_themes[ti].name) > 30) { nm[29]='.'; nm[30]='\0'; }
+        snprintf(out, outsz, "%s", nm);
+    }
+}
+
+// Paint the whole themes-list band: section header, L/R page glyphs, the visible
+// rows (with the selection highlight), and the "# of #" position counter. Used
+// by both the normal list redraw and the snappy instant-repaint on apply.
+static void draw_theme_list(const int *list, int ln, int sel, int top,
+                            int page, int applied_idx) {
+    fb_rect(0, LIST_BAND_Y, ROW_W + 4, LIST_BAND_H, COL_BG);
+    fb_text(LIST_X, PAGE_Y, page == 0 ? "Compatible Themes" : "Incompatible Themes",
+            COL_HEADER);
+    int gy = PAGE_Y - 2, rx = LIST_X + ROW_W - 4, rw = 6 - 1 + 8;
+    fb_corner_btn(rx - rw, gy, 'R', 1, COL_BTN, COL_BG);
+    fb_corner_btn(rx - rw - rw - 3, gy, 'L', 0, COL_BTN, COL_BG);
+
+    if (ln == 0) {
+        fb_text(LIST_X, LIST_Y, "-", COL_DIM);
+    } else {
+        for (int r = 0; r < VIS_ROWS && top + r < ln; r++) {
+            int idx = top + r;
+            int y = LIST_Y + r * ROW_H;
+            int is_sel = (idx == sel);
+            if (is_sel) fb_rect(LIST_X - 2, y - 1, ROW_W, ROW_H, COL_HILITE);
+            char line[48];
+            theme_row_label(list[idx], page, applied_idx, line, sizeof(line));
+            fb_text_clip(LIST_X, y, line, is_sel ? COL_TEXT : COL_DIM, 26);
+        }
+    }
+    char pos[20];
+    snprintf(pos, sizeof(pos), "%d of %d", ln > 0 ? sel + 1 : 0, ln);
+    fb_rect(LIST_X, INFO_Y - 1, ROW_W, 10, COL_BG);
+    fb_text(LIST_X, INFO_Y, pos, COL_DIM);
+}
+
+// Paint the variant-select list: header (theme name) and each row. Row kind 2
+// ("Create new variant") renders as a left-aligned [+ label] pushed down two
+// rows; other rows render "[X]/[ ] label" with the applied-variant mark. Shared
+// by the normal redraw and the instant-repaint on apply so they can't drift.
+static void draw_variant_list(const char *title, int nrows, const int *vk,
+                              char vlabel[][40], int sel, int applied_row,
+                              int clear_band) {
+    if (clear_band) {
+        fb_rect(0, LIST_BAND_Y, ROW_W + 4, LIST_BAND_H, COL_BG);
+        fb_text(LIST_X, PAGE_Y, title, COL_HEADER);
+    }
+    for (int r = 0; r < nrows; r++) {
+        int is_sel = (r == sel);
+        u16 col = is_sel ? COL_TEXT : COL_DIM;
+        int y = LIST_Y + r * (ROW_H + 2);
+        if (vk[r] == 2) {
+            // "Create new variant": left-aligned, pushed down ~2 rows; the + glyph
+            // and the label are vertically centered on each other. The highlight
+            // wraps the glyph with 1px of margin above and below it.
+            y += 2 * (ROW_H + 2);
+            if (is_sel) fb_rect(LIST_X - 2, y - 2, ROW_W, BTN_D + 2, COL_HILITE);
+            int bx = fb_button(LIST_X, y - 1, '+', COL_BTN, is_sel ? COL_HILITE : COL_BG);
+            fb_text(LIST_X + bx + 4, y + (BTN_D - GLYPH_H) / 2 - 1, vlabel[r], col);
+        } else {
+            if (is_sel) fb_rect(LIST_X - 2, y - 1, ROW_W, ROW_H, COL_HILITE);
+            char line[48];
+            snprintf(line, sizeof(line), "[%c] %s", r == applied_row ? 'X' : ' ', vlabel[r]);
+            fb_text_clip(LIST_X, y, line, col, 26);
+        }
+    }
+}
+
 int main(void) {
     // Hold both LCDs fully black for the entire boot (brightness floored). We
     // draw everything -- engines, framebuffers, the menu, the second screen --
@@ -2723,10 +2951,7 @@ int main(void) {
     // SD is up: load saved settings (default view).
     settings_load();
 
-    mkdir("sd:/_nds", 0777);
-    mkdir("sd:/_nds/TWiLightMenu", 0777);
-    mkdir("sd:/_nds/TWiLightMenu/dsimenu", 0777);
-    mkdir(PHOTOS_DIR, 0777);
+    ensure_photos_dir();   // create _nds/TWiLightMenu/dsimenu/photos chain if absent
 
     build_list();
     repartition();
@@ -2750,7 +2975,7 @@ int main(void) {
         } else {
             fb_rect(0, 0, SCR_W, SCR_H, COL_BG);
             fb_text(8, SCR_H / 2 - 4, "Nothing new to sync.", COL_TEXT);
-            for (int i = 0; i < 45; i++) swiWaitForVBlank();   // ~0.75s glimpse
+            for (int i = 0; i < QUICK_SYNC_GLIMPSE; i++) swiWaitForVBlank();   // ~0.75s glimpse
         }
         return 0;   // back to TWiLightMenu
     }
@@ -2770,14 +2995,19 @@ int main(void) {
     int theme_apply_sel = 0;               // variant picker selection (0/1/2)
     int theme_made_idx = -1;               // base theme just made compatible
     int last_theme_preview = -2;           // preview-pane cache key
-    int theme_preview_pending = 0;         // a preview decode is queued
-    int theme_preview_wait = 0;            // frames to wait before decoding
+    int theme_preview_wait = 0;            // settle counter (frames since last move)
+    int theme_list[MAX_THEMES + 2];        // cached page list (rebuilt on entry/flip)
+    int theme_list_n = 0;                  // its length
+    int theme_list_dirty = 1;              // rebuild needed
     int theme_hint_state = -1;             // last drawn A-hint (compat) state
     int theme_want_current = 0;            // one-shot: select active theme on entry
     int adj_frame = 0, adj_shadow = 0, adj_lr = 0;  // builder adjustment toggles
     int adj_sel = 1;                       // adjustment row cursor (0=photo locked)
     char theme_made_suffix[VARSUF_LEN] = "";   // suffix of the variant just built
     int adj_from_create = 0;               // ADJUST entered via "Create new variant"
+    int theme_want_made_variant = 0;       // one-shot: hover the just-made variant
+    int theme_want_made_base = 0;          // one-shot: hover the just-converted theme
+    char del_suffix[VARSUF_LEN] = "";      // variant suffix pending deletion
     int theme_page = 0;                    // 0 = Compatible page, 1 = Incompatible
     int theme_applied_idx = -1;            // base index of the currently-applied theme
 
@@ -2786,7 +3016,7 @@ int main(void) {
 
     // Auto-repeat for held directions (hold Up/Down to scroll). Initial delay
     // then a faster repeat. Discrete actions still use keysDown() (one per tap).
-    keysSetRepeat(12, 4);
+    keysSetRepeat(KEY_REPEAT_DELAY, KEY_REPEAT_RATE);
 
     // The second screen (riddle in list view, controls in gallery view) is
     // refreshed when the screen or view changes -- except for transient
@@ -2837,6 +3067,7 @@ int main(void) {
                     theme_sel = 0; theme_top = 0;
                     theme_page = 0;             // always open to Compatible
                     theme_want_current = 1;     // default-select the active theme
+                    theme_list_dirty = 1;       // rebuild cached page list
                     screen = SCREEN_THEMES;
                 } else {                        // Settings
                     screen = SCREEN_SETTINGS;
@@ -2855,7 +3086,7 @@ int main(void) {
                     // Nothing to do: briefly say so, then stay on the menu.
                     fb_rect(0, LIST_BAND_Y, SCR_W, LIST_BAND_H, COL_BG);
                     fb_text(LIST_X, LIST_Y + 2, "No new photos to sync.", COL_DIM);
-                    for (int f = 0; f < 70; f++) swiWaitForVBlank();
+                    for (int f = 0; f < MENU_MSG_HOLD; f++) swiWaitForVBlank();
                     redraw_list = 1;   // restore the menu rows
                 }
             }
@@ -2885,10 +3116,10 @@ int main(void) {
             if (redraw_all) {
                 draw_chrome("Add photos", NULL, !view_grid);   // no side preview in grid
                 if (!view_grid) {
-                    Hint left[2]  = { { NULL, 'A', "Toggle", 0 },
-                                      { NULL, 'Y', "Toggle all", 0 } };
-                    Hint right[2] = { { NULL, 'X', "Expand", 0 },
-                                      { "START", 0, "Sync", 0 } };
+                    Hint left[2]  = { { NULL, 'A', "Toggle", 0, 0 },
+                                      { NULL, 'Y', "Toggle all", 0, 0 } };
+                    Hint right[2] = { { NULL, 'X', "Expand", 0, 0 },
+                                      { "START", 0, "Sync", 0, 0 } };
                     draw_footer_2col(left, 2, right, 2);
                 }
                 redraw_all = 0; redraw_list = 1; redraw_prev = 1;
@@ -2963,10 +3194,10 @@ int main(void) {
                 char hdr[32]; snprintf(hdr, sizeof(hdr), "%d", n);
                 draw_chrome("Gallery", hdr, !view_grid);
                 if (!view_grid && n > 0) {
-                    Hint left[2]  = { { NULL, 'A', "Expand", 0 },
-                                      { NULL, 'X', "Remove", 0 } };
-                    Hint right[2] = { { NULL, 'Y', "Remove all", 0 },
-                                      { "SELECT", 0, "Switch view", 0 } };
+                    Hint left[2]  = { { NULL, 'A', "Expand", 0, 0 },
+                                      { NULL, 'X', "Remove", 0, 0 } };
+                    Hint right[2] = { { NULL, 'Y', "Remove all", 0, 0 },
+                                      { "SELECT", 0, "Switch view", 0, 0 } };
                     draw_footer_2col(left, 2, right, 2);
                 }
                 redraw_all = 0; redraw_list = 1; redraw_prev = 1;
@@ -3067,9 +3298,9 @@ int main(void) {
                 saved_quick = g_settings.quick_mode;
                 sel = 0;
                 draw_chrome("Settings", NULL, 0);
-                Hint h[3] = { { NULL, 0, "Move", 1 },
-                              { NULL, 0, "Change", 2 },
-                              { "START", 0, "Save", 0 } };
+                Hint h[3] = { { NULL, 0, "Move", 1, 0 },
+                              { NULL, 0, "Change", 2, 0 },
+                              { "START", 0, "Save", 0, 0 } };
                 draw_footer_hints(h, 3);
                 redraw_all = 0; redraw_list = 1;
             }
@@ -3099,7 +3330,7 @@ int main(void) {
         else if (screen == SCREEN_CONVERT) {
             preview_free();
             run_conversion(g_unconv, g_n_unconv);
-            { Hint h[2] = { { "START", 0, "Menu", 0 }, { "SELECT", 0, "Quit", 0 } };
+            { Hint h[2] = { { "START", 0, "Menu", 0, 0 }, { "SELECT", 0, "Quit", 0, 0 } };
               draw_footer_hints(h, 2); }
             int k = wait_keys(KEY_START | KEY_SELECT);
             if (k & KEY_SELECT) { screen = SCREEN_EXIT; continue; }
@@ -3109,11 +3340,19 @@ int main(void) {
         else if (screen == SCREEN_THEMES) {
             // Two pages flipped with L/R: page 0 = Compatible (with a pinned
             // "Default theme" row at top, alphabetical after), page 1 = Incompatible.
-            int list[MAX_THEMES + 2];
-            int ln = build_page_list(theme_page, list);
+            // The page list (sorted) is cached and only rebuilt when the screen is
+            // (re)entered or the page is flipped -- rebuilding it every frame made
+            // navigation feel sticky.
+            if (redraw_all) theme_list_dirty = 1;
+            if (theme_list_dirty) {
+                theme_list_n = build_page_list(theme_page, theme_list);
+                theme_list_dirty = 0;
+            }
+            int *list = theme_list;
+            int ln = theme_list_n;
 
             if (redraw_all) {
-                draw_chrome("Use with custom theme", NULL, 1);
+                draw_chrome("Use with custom theme (beta)", NULL, 1);
                 theme_applied_idx = theme_applied_base();
                 if (theme_want_current) {
                     theme_want_current = 0;
@@ -3123,15 +3362,27 @@ int main(void) {
                             if (list[k] == theme_applied_idx) { theme_sel = k; break; }
                     }
                 }
+                if (theme_want_made_base) {
+                    theme_want_made_base = 0;
+                    // Land on the just-converted theme's row.
+                    if (theme_made_idx >= 0)
+                        for (int k = 0; k < ln; k++)
+                            if (list[k] == theme_made_idx) { theme_sel = k; break; }
+                }
                 if (theme_sel >= ln) theme_sel = ln > 0 ? ln - 1 : 0;
                 theme_top = (theme_sel / VIS_ROWS) * VIS_ROWS;
                 redraw_all = 0; redraw_list = 1; last_theme_preview = -2;
-                theme_preview_pending = 1; theme_preview_wait = 0;
+                theme_preview_wait = 0;
                 theme_hint_state = -1;
             }
             if (down & KEY_B) {
                 go_to_menu(&screen, &menu_sel, &last_preview_sel, &redraw_list, 2);
                 continue;
+            }
+            // X deletes the hovered theme (whole theme + variants). Not the Default.
+            if ((down & KEY_X) && ln > 0 && list[theme_sel] != THEME_DEFAULT_ROW) {
+                theme_made_idx = list[theme_sel];   // theme to delete
+                screen = SCREEN_THEME_DELTHEME; redraw_all = 1; continue;
             }
 
             // L/R flip between the Compatible and Incompatible pages.
@@ -3140,8 +3391,9 @@ int main(void) {
             if ((down & (KEY_R | KEY_RIGHT)) && theme_page != 1) { theme_page = 1; flipped = 1; }
             if (flipped) {
                 theme_sel = 0; theme_top = 0; redraw_list = 1; last_theme_preview = -2;
-                theme_preview_pending = 1; theme_preview_wait = 0; theme_hint_state = -1;
-                ln = build_page_list(theme_page, list);
+                theme_preview_wait = 0; theme_hint_state = -1;
+                theme_list_n = build_page_list(theme_page, theme_list);
+                ln = theme_list_n;
             }
 
             int moved = 0;
@@ -3153,57 +3405,31 @@ int main(void) {
             }
             if (moved) {
                 redraw_list = 1;
-                theme_preview_pending = 1; theme_preview_wait = 10; last_theme_preview = -2;
+                theme_preview_wait = 0;   // settle counter: reset on movement
+                // Clear any lingering "Theme applied." status under the counter.
+                fb_rect(LIST_X, INFO_Y + ROW_H - 2, ROW_W, 12, COL_BG);
             }
+            theme_preview_wait++;         // increment every frame (gallery pattern)
 
             if ((down & KEY_A) && ln > 0) {
                 int cur_theme = list[theme_sel];
                 if (cur_theme == THEME_DEFAULT_ROW) {
-                    // Move the mark to Default and repaint the rows immediately,
-                    // pushing to screen BEFORE the (slower) settings.ini write so
-                    // the X feels instant.
-                    theme_applied_idx = -1;
-                    redraw_list = 1;
-                    // Force the row repaint right now.
-                    {
-                        fb_rect(0, LIST_BAND_Y, ROW_W + 4, LIST_BAND_H, COL_BG);
-                        fb_text(LIST_X, PAGE_Y, "Compatible Themes", COL_HEADER);
-                        int gy = PAGE_Y - 2, rx = LIST_X + ROW_W - 4, rw = 6 - 1 + 8;
-                        fb_corner_btn(rx - rw, gy, 'R', 1, COL_BTN, COL_BG);
-                        fb_corner_btn(rx - rw - rw - 3, gy, 'L', 0, COL_BTN, COL_BG);
-                        for (int r = 0; r < VIS_ROWS && theme_top + r < ln; r++) {
-                            int idx2 = theme_top + r, ti2 = list[idx2];
-                            int yy = LIST_Y + r * ROW_H;
-                            int sel2 = (idx2 == theme_sel);
-                            if (sel2) fb_rect(LIST_X - 2, yy - 1, ROW_W, ROW_H, COL_HILITE);
-                            char l2[48];
-                            if (ti2 == THEME_DEFAULT_ROW)
-                                snprintf(l2, sizeof(l2), "[%c] Default", theme_applied_idx == -1 ? 'X' : ' ');
-                            else {
-                                int nv2 = theme_variant_count(&g_themes[ti2]) + 1;
-                                char nm2[30]; snprintf(nm2, sizeof(nm2), "%s", g_themes[ti2].name);
-                                if ((int)strlen(g_themes[ti2].name) > 20) { nm2[19]='.'; nm2[20]='\0'; }
-                                snprintf(l2, sizeof(l2), "[%c] %s (%d)", ti2 == theme_applied_idx ? 'X':' ', nm2, nv2);
-                            }
-                            fb_text_clip(LIST_X, yy, l2, sel2 ? COL_TEXT : COL_DIM, 26);
-                        }
-                        char pos[20];
-                        snprintf(pos, sizeof(pos), "%d of %d", theme_sel + 1, ln);
-                        fb_rect(LIST_X, INFO_Y - 1, ROW_W, 10, COL_BG);
-                        fb_text(LIST_X, INFO_Y, pos, COL_DIM);
-                        swiWaitForVBlank();
-                    }
-                    // Show "Applying theme..." then "Theme applied." in the preview
-                    // pane (the main list's counter line is reserved for # of #).
-                    fb_rect(PREV_X, PREV_Y, PREV_W, PREV_H, rgb15(24, 24, 28));
-                    fb_text(PREV_X + 4, PREV_Y + PREV_H/2 - 4, "Applying...", rgb15(220,220,220));
+                    // Show "Applying theme..." WITHOUT moving the X yet (the old
+                    // applied row keeps its mark). After the write completes, move
+                    // the X to Default and swap to "Theme applied." together, so the
+                    // mark updates exactly when the confirmation appears.
+                    int dmsg_y = INFO_Y + ROW_H;
+                    fb_rect(LIST_X, dmsg_y - 2, ROW_W, 12, COL_BG);
+                    fb_text(LIST_X, dmsg_y, "Applying theme...", COL_TEXT);
                     swiWaitForVBlank();
                     twl_set_theme(DEFAULT_THEME_NAME);
-                    fb_rect(PREV_X, PREV_Y, PREV_W, PREV_H, rgb15(24, 24, 28));
-                    fb_text(PREV_X + 4, PREV_Y + PREV_H/2 - 4, "Applied.", rgb15(120,200,140));
-                    for (int f = 0; f < 90; f++) swiWaitForVBlank();
-                    // Restore the Default preview afterwards.
-                    draw_default_preview();
+                    // Now move the mark to Default and repaint the rows.
+                    theme_applied_idx = -1;
+                    draw_theme_list(list, ln, theme_sel, theme_top, theme_page,
+                                    theme_applied_idx);
+                    fb_rect(LIST_X, dmsg_y - 2, ROW_W, 12, COL_BG);
+                    fb_text(LIST_X, dmsg_y, "Theme applied.", rgb15(120,200,140));
+                    swiWaitForVBlank();
                     redraw_list = 0;   // rows already painted
                 } else {
                     theme_made_idx = cur_theme;
@@ -3216,99 +3442,59 @@ int main(void) {
             }
 
             if (redraw_list) {
-                fb_rect(0, LIST_BAND_Y, ROW_W + 4, LIST_BAND_H, COL_BG);
-                fb_text(LIST_X, PAGE_Y,
-                        theme_page == 0 ? "Compatible Themes" : "Incompatible Themes",
-                        COL_HEADER);
-                int gy = PAGE_Y - 2;
-                int rx = LIST_X + ROW_W - 4;
-                int rw = 6 - 1 + 8;
-                fb_corner_btn(rx - rw, gy, 'R', 1, COL_BTN, COL_BG);
-                fb_corner_btn(rx - rw - rw - 3, gy, 'L', 0, COL_BTN, COL_BG);
-
-                if (ln == 0) {
-                    fb_text(LIST_X, LIST_Y, "-", COL_DIM);
-                } else {
-                    for (int r = 0; r < VIS_ROWS && theme_top + r < ln; r++) {
-                        int idx = theme_top + r;
-                        int ti = list[idx];
-                        int y = LIST_Y + r * ROW_H;
-                        int is_sel = (idx == theme_sel);
-                        if (is_sel) fb_rect(LIST_X - 2, y - 1, ROW_W, ROW_H, COL_HILITE);
-                        char line[48];
-                        if (ti == THEME_DEFAULT_ROW) {
-                            // Pinned Default row (no mark column needed, no count).
-                            snprintf(line, sizeof(line), "[%c] Default",
-                                     theme_applied_idx == -1 ? 'X' : ' ');
-                        } else if (theme_page == 0) {
-                            // Variant count includes the photo/original options too:
-                            // each generated variant + the base (1). Always shown.
-                            int nv = theme_variant_count(&g_themes[ti]) + 1;
-                            char cnt[10];
-                            snprintf(cnt, sizeof(cnt), " (%d)", nv);
-                            char nm[30];
-                            snprintf(nm, sizeof(nm), "%s", g_themes[ti].name);
-                            if ((int)strlen(g_themes[ti].name) > 20) { nm[19]='.'; nm[20]='\0'; }
-                            snprintf(line, sizeof(line), "[%c] %s%s",
-                                     ti == theme_applied_idx ? 'X' : ' ', nm, cnt);
-                        } else {
-                            char nm[40];
-                            snprintf(nm, sizeof(nm), "%s", g_themes[ti].name);
-                            if ((int)strlen(g_themes[ti].name) > 30) { nm[29]='.'; nm[30]='\0'; }
-                            snprintf(line, sizeof(line), "%s", nm);
-                        }
-                        fb_text_clip(LIST_X, y, line, is_sel ? COL_TEXT : COL_DIM, 26);
-                    }
-                }
-                // Position counter "# of #" at LIST_X/INFO_Y, matching the Add
-                // and Library list screens.
-                {
-                    char pos[20];
-                    snprintf(pos, sizeof(pos), "%d of %d", ln > 0 ? theme_sel + 1 : 0, ln);
-                    fb_rect(LIST_X, INFO_Y - 1, ROW_W, 10, COL_BG);
-                    fb_text(LIST_X, INFO_Y, pos, COL_DIM);
-                }
+                draw_theme_list(list, ln, theme_sel, theme_top, theme_page,
+                                theme_applied_idx);
                 redraw_list = 0;
             }
 
-            // Context A-button hint.
+            // Context footer hints. X (Delete) is dimmed and inert on the Default
+            // row, which can't be deleted. The footer re-renders whenever the page
+            // or the on-Default state changes.
             {
                 int comp = (theme_page == 0);
-                if (comp != theme_hint_state) {
-                    Hint hh[2] = { { NULL, 'A', comp ? "Select" : "Make compatible", 0 },
-                                   { NULL, 'B', "Back", 0 } };
-                    draw_footer_hints(hh, 2);
-                    theme_hint_state = comp;
+                int on_default = (ln > 0 && list[theme_sel] == THEME_DEFAULT_ROW);
+                int hstate = comp * 2 + on_default;
+                if (hstate != theme_hint_state) {
+                    Hint hh[3] = { { NULL, 'A', comp ? "Select" : "Make compatible", 0, 0 },
+                                   { NULL, 'X', "Delete", 0, on_default },
+                                   { NULL, 'B', "Back", 0, 0 } };
+                    draw_footer_hints(hh, 3);
+                    theme_hint_state = hstate;
                 }
             }
 
-            // Settled preview load. Skip the (blocking) decode on any frame where
-            // a key is held/pressed, so a slow decode never swallows the next tap;
-            // the preview loads once the user pauses. The Default row has no preview.
-            if (theme_preview_pending && ln > 0 && !down && !rep && !keysHeld()) {
-                if (theme_preview_wait > 0) theme_preview_wait--;
-                else if (theme_sel != last_theme_preview) {
-                    int ti = list[theme_sel];
-                    if (ti == THEME_DEFAULT_ROW) {
-                        draw_default_preview();
-                    } else {
-                        draw_theme_preview(g_themes[ti].name);
-                    }
-                    last_theme_preview = theme_sel;
-                    theme_preview_pending = 0;
-                    // A decode can take longer than a frame; a quick A tap during
-                    // it could otherwise be missed. Re-scan and, if A is now down,
-                    // act on it immediately so the press isn't dropped.
-                    scanKeys();
-                    if ((keysDown() & KEY_A) && ln > 0) {
-                        int ct = list[theme_sel];
-                        if (ct != THEME_DEFAULT_ROW) {
-                            theme_made_idx = ct;
-                            theme_apply_sel = 0;
-                            screen = (theme_page == 0) ? SCREEN_THEME_APPLY : SCREEN_THEME_EXPLAIN;
-                            redraw_all = 1;
-                            continue;
-                        }
+            // Preview load, mirroring the gallery's list_update_preview: once the
+            // selection has been still for a few frames, decode it. The multi-entry
+            // cache makes repeat visits instant, so -- exactly like the gallery --
+            // the preview can update on every settled step, including while holding
+            // the d-pad, without the freeze-then-jump of a gated decode.
+            if (ln > 0 && theme_preview_wait >= PREVIEW_SETTLE && theme_sel != last_theme_preview) {
+                int ti = list[theme_sel];
+                if (ti == THEME_DEFAULT_ROW) draw_default_preview();
+                else                         draw_theme_preview(g_themes[ti].name);
+                last_theme_preview = theme_sel;
+            }
+
+            // Background pre-warm: once the user has been idle for a while (not
+            // mid-scroll), decode ONE not-yet-cached preview per idle frame. The
+            // longer idle threshold means a background decode never competes with
+            // active navigation -- scrolling stays responsive, and the cache fills
+            // in only once the user has clearly paused. After warming, every
+            // preview is an instant cache blit.
+            if (theme_preview_wait >= PREWARM_IDLE && last_theme_preview == theme_sel &&
+                !down && !rep && !keysHeld()) {
+                static int warm_i = 0;
+                if (warm_i >= g_n_themes) warm_i = 0;
+                int scanned = 0;
+                while (scanned < g_n_themes) {
+                    int idx = warm_i++;
+                    if (warm_i >= g_n_themes) warm_i = 0;
+                    scanned++;
+                    char wimg[600];
+                    if (theme_top_png_path(g_themes[idx].name, wimg, sizeof(wimg)) &&
+                        pcache_find(wimg) < 0) {
+                        pcache_decode(wimg);   // one decode this idle frame, then stop
+                        break;
                     }
                 }
             }
@@ -3324,7 +3510,7 @@ int main(void) {
                 fb_text(LIST_X, ty,      "selected adjustments.", COL_TEXT); ty += 20;
                 fb_text(LIST_X, ty,      "Adjustments can be selected on the", COL_TEXT); ty += 12;
                 fb_text(LIST_X, ty,      "next page.", COL_TEXT);
-                Hint h[2] = { { NULL, 'A', "Next", 0 }, { NULL, 'B', "Cancel", 0 } };
+                Hint h[2] = { { NULL, 'A', "Next", 0, 0 }, { NULL, 'B', "Cancel", 0, 0 } };
                 draw_footer_hints(h, 2);
                 redraw_all = 0;
             }
@@ -3343,7 +3529,7 @@ int main(void) {
                 // (it's a one-screen flow there, not the 2-screen make-compatible).
                 draw_chrome("Apply adjustments", adj_from_create ? NULL : "Page 2/2", 0);
                 fb_text(LIST_X, LIST_Y - 2, "Select adjustments to apply:", COL_DIM);
-                Hint h[2] = { { "START", 0, "Confirm", 0 }, { NULL, 'B', "Cancel", 0 } };
+                Hint h[2] = { { "START", 0, "Confirm", 0, 0 }, { NULL, 'B', "Cancel", 0, 0 } };
                 draw_footer_hints(h, 2);
                 redraw_all = 0; redraw_list = 1;
             }
@@ -3390,22 +3576,38 @@ int main(void) {
                 char suffix[VARSUF_LEN];
                 build_variant_suffix(adj_frame, adj_shadow, adj_lr, suffix, sizeof(suffix));
 
-                // If this exact variant already exists, tell the user and stay.
+                // Does this variant already exist? Two cases:
+                //  (a) the "<base><suffix>" folder is present, or
+                //  (b) it's photo-only (" - p", no adjustments) AND the base theme
+                //      is itself already photo-enabled -- then the existing photo
+                //      version IS the base folder ("Photo (Original)").
                 char existpath[600];
                 snprintf(existpath, sizeof(existpath), "%s/%s%s", THEMES_DIR, base, suffix);
                 struct stat exst;
-                if (stat(existpath, &exst) == 0 && S_ISDIR(exst.st_mode)) {
+                int folder_exists = (stat(existpath, &exst) == 0 && S_ISDIR(exst.st_mode));
+
+                int photo_only = (!adj_frame && !adj_shadow && !adj_lr);
+                char basedir[600];
+                snprintf(basedir, sizeof(basedir), "%s/%s", THEMES_DIR, base);
+                int base_dup = (photo_only && theme_render_photo(basedir) == 1);
+
+                if (folder_exists || base_dup) {
+                    // The folder to apply if the user says "yes": the existing
+                    // variant folder, or the base itself for the photo-only dup.
+                    char applyf[THEME_NAMELEN + VARSUF_LEN];
+                    if (base_dup) snprintf(applyf, sizeof(applyf), "%s", base);
+                    else          snprintf(applyf, sizeof(applyf), "%s%s", base, suffix);
                     // Popup: variant exists -- offer to select it instead.
                     fb_dim_rect(0, 0, SCR_W, SCR_H);
-                    const int PW = 224, PH = 78;
+                    const int PW = 224, PH = 64;
                     int px = (SCR_W - PW)/2, py = (SCR_H - PH)/2;
                     fb_rect(px-1, py-1, PW+2, PH+2, rgb15(90,90,105));
                     fb_rect(px, py, PW, PH, COL_BG);
                     const char *m1 = "Variant already exists";
                     const char *m2 = "Select the existing variant?";
-                    fb_text(px + (PW - (int)strlen(m1)*6)/2, py + 12, m1, COL_TEXT);
-                    fb_text(px + (PW - (int)strlen(m2)*6)/2, py + 26, m2, COL_DIM);
-                    int by = py + PH - 20, tyb = by + (BTN_D - GLYPH_H)/2;
+                    fb_text(px + (PW - (int)strlen(m1)*6)/2, py + 10, m1, COL_TEXT);
+                    fb_text(px + (PW - (int)strlen(m2)*6)/2, py + 22, m2, COL_DIM);
+                    int by = py + 41, tyb = by + (BTN_D - GLYPH_H)/2;
                     int wY=(int)strlen("Yes")*6, wN=(int)strlen("No")*6;
                     int roww = BTN_D+4+wY+16+BTN_D+4+wN;
                     int hx = px + (PW-roww)/2;
@@ -3413,11 +3615,7 @@ int main(void) {
                     hx += fb_button(hx, by, 'B', COL_BTN, COL_BG)+4; fb_text(hx,tyb,"No",COL_DIM);
                     int k = wait_keys(KEY_A | KEY_B);
                     if (k & KEY_A) {
-                        // Apply the existing variant, then go to variant select.
-                        char folder[THEME_NAMELEN + VARSUF_LEN];
-                        snprintf(folder, sizeof(folder), "%s%s", base, suffix);
-                        twl_set_theme(folder);
-                        // theme_made_idx already points at this base.
+                        twl_set_theme(applyf);
                         theme_apply_sel = 0;
                         screen = SCREEN_THEME_APPLY; redraw_all = 1; continue;
                     }
@@ -3447,30 +3645,19 @@ int main(void) {
                     fb_text(barx, bary + barh + 4, label, COL_TEXT);
                     swiWaitForVBlank();
 
-                    int start  = barw * s / nstages;          // this stage's start
-                    int target = barw * (s + 1) / nstages;    // this stage's end
+                    int target = barw * (s + 1) / nstages;   // this stage's end
 
-                    // We can't update the bar during the (blocking) work, so we
-                    // split the animation: creep slowly across most of the stage's
-                    // span BEFORE the work (so it's visibly moving), run the work,
-                    // then glide the remainder to the boundary. The creep stops
-                    // short of the end so completion always lands the bar exactly.
-                    int creep_to = start + (target - start) * 4 / 5;
-                    while (filled < creep_to) {
-                        filled += (creep_to - filled + 11) / 12;   // slow ease
-                        if (filled > creep_to) filled = creep_to;
-                        fb_rect(barx, bary, filled, barh, rgb15(60, 150, 90));
-                        swiWaitForVBlank();
-                    }
-
+                    // The work blocks (we can't tick the bar mid-call), so the bar
+                    // holds at this stage's start WHILE the work runs, then advances
+                    // smoothly to the stage boundary the moment the work finishes --
+                    // i.e. the fill reaches each stage's end when that stage is done.
                     if (s == 0)      rc = tv_copy(base, suffix, dst, sizeof(dst));
                     else if (s == 1) rc = tv_photo(dst);
                     else             rc = tv_adjust(dst, adj_frame, adj_shadow, adj_lr);
                     if (rc != 0) break;
 
-                    // Finish this stage: glide to the boundary.
                     while (filled < target) {
-                        filled += (target - filled + 4) / 5;
+                        filled += (target - filled + 6) / 7;   // ease-out toward boundary
                         if (filled > target) filled = target;
                         fb_rect(barx, bary, filled, barh, rgb15(60, 150, 90));
                         swiWaitForVBlank();
@@ -3480,14 +3667,24 @@ int main(void) {
                 fb_rect(barx, bary + barh + 4, SCR_W - 2*barx, 10, COL_BG);
                 if (rc == 0) fb_text(barx, bary + barh + 4, "Done", rgb15(120, 200, 140));
                 else         fb_text(barx, bary + barh + 4, "Copy failed.", COL_FAIL);
-                for (int f = 0; f < (rc == 0 ? 40 : 60); f++) swiWaitForVBlank();
+                for (int f = 0; f < (rc == 0 ? BUILD_DONE_HOLD : BUILD_FAIL_HOLD); f++) swiWaitForVBlank();
 
                 build_theme_list();
+                theme_list_dirty = 1;
                 theme_made_idx = -1;
                 for (int i = 0; i < g_n_themes; i++)
                     if (strcmp(g_themes[i].name, base) == 0) { theme_made_idx = i; break; }
                 snprintf(theme_made_suffix, sizeof(theme_made_suffix), "%s", suffix);
-                screen = SCREEN_THEME_SETPROMPT; redraw_all = 1;
+
+                if (adj_from_create) {
+                    // Came from "Create new variant": go straight back to the
+                    // variant-select screen with the just-made variant hovered.
+                    theme_want_made_variant = 1;
+                    screen = SCREEN_THEME_APPLY; redraw_all = 1;
+                } else {
+                    // Normal make-compatible: offer to set it as the theme.
+                    screen = SCREEN_THEME_SETPROMPT; redraw_all = 1;
+                }
                 continue;
             }
         }
@@ -3506,34 +3703,40 @@ int main(void) {
             static int  vk[MAX_VARIANTS + 4];      // row kind
             static char vfolder[MAX_VARIANTS + 4][THEME_NAMELEN + VARSUF_LEN];
             static char vlabel_s[MAX_VARIANTS + 4][40];
+            static char vsuf[MAX_VARIANTS + 4][VARSUF_LEN];  // variant suffix ("" = original/base)
             int nrows = 0;
 
             // If the base theme is itself already photo-enabled, list it as a
-            // plain "Photo" option (folder = base name, no suffix).
+            // plain "Photo" option (folder = base name, no suffix). This IS the
+            // original theme folder, so it's tagged "(Original)".
             if (base_is_photo) {
                 vk[nrows] = 0;
                 snprintf(vfolder[nrows], sizeof(vfolder[0]), "%s", t->name);
-                snprintf(vlabel_s[nrows], sizeof(vlabel_s[0]), "Photo");
+                snprintf(vlabel_s[nrows], sizeof(vlabel_s[0]), "P (Original)");
+                vsuf[nrows][0] = '\0';
                 nrows++;
             }
             // Each generated variant.
             for (int v = 0; v < t->nvariants; v++) {
                 vk[nrows] = 0;
                 snprintf(vfolder[nrows], sizeof(vfolder[0]), "%s%s", t->name, t->variant[v]);
-                variant_label(t->variant[v], vlabel_s[nrows], sizeof(vlabel_s[0]));
+                variant_label_short(t->variant[v], vlabel_s[nrows], sizeof(vlabel_s[0]));
+                snprintf(vsuf[nrows], sizeof(vsuf[0]), "%s", t->variant[v]);
                 nrows++;
             }
             // "No photo" = the plain original (only meaningful if the base is not
-            // itself photo-enabled).
+            // itself photo-enabled). This is the original theme folder -> "(Original)".
             if (!base_is_photo) {
                 vk[nrows] = 1;
                 snprintf(vfolder[nrows], sizeof(vfolder[0]), "%s", t->name);
-                snprintf(vlabel_s[nrows], sizeof(vlabel_s[0]), "No photo");
+                snprintf(vlabel_s[nrows], sizeof(vlabel_s[0]), "NP (Original)");
+                vsuf[nrows][0] = '\0';
                 nrows++;
             }
             // "Create new variant" action.
             vk[nrows] = 2;
             snprintf(vlabel_s[nrows], sizeof(vlabel_s[0]), "Create new variant");
+            vsuf[nrows][0] = '\0';
             nrows++;
 
             if (theme_apply_sel >= nrows) theme_apply_sel = 0;
@@ -3546,15 +3749,53 @@ int main(void) {
             }
             if (redraw_all) {
                 draw_chrome("Variant select", NULL, 1);
-                Hint h[2] = { { NULL, 'A', "Select", 0 }, { NULL, 'B', "Back", 0 } };
-                draw_footer_hints(h, 2);
                 redraw_all = 0;
+                theme_hint_state = -1;   // force footer draw below
+                // One-shot: after "Create new variant", hover the new variant.
+                if (theme_want_made_variant) {
+                    theme_want_made_variant = 0;
+                    char madef[THEME_NAMELEN + VARSUF_LEN];
+                    snprintf(madef, sizeof(madef), "%s%s", t->name, theme_made_suffix);
+                    for (int r = 0; r < nrows; r++)
+                        if (vk[r] != 2 && strcmp(vfolder[r], madef) == 0) { theme_apply_sel = r; break; }
+                }
                 draw_theme_preview(t->name);   // all share the base top.png
+                // Abbreviation legend, placed below the "preview" caption (which
+                // sits just under the preview pane) with a bit of breathing room.
+                {
+                    int lx = PREV_X, ly = PREV_Y + PREV_H + 18;
+                    fb_text(lx, ly, "P = Photo",     COL_DIM); ly += 10;
+                    fb_text(lx, ly, "F = Frame",     COL_DIM); ly += 10;
+                    fb_text(lx, ly, "S = Shadow",    COL_DIM); ly += 10;
+                    fb_text(lx, ly, "L/R = Button", COL_DIM); ly += 10;
+                    fb_text(lx, ly, "NP = NoPhoto", COL_DIM);
+                }
                 redraw_list = 1;
             }
             if (down & KEY_B) { screen = SCREEN_THEMES; redraw_all = 1; continue; }
-            if (rep & KEY_UP)   { if (theme_apply_sel > 0) { theme_apply_sel--; redraw_list = 1; } }
-            if (rep & KEY_DOWN) { if (theme_apply_sel < nrows-1) { theme_apply_sel++; redraw_list = 1; } }
+            if ((down & KEY_X) && vk[theme_apply_sel] == 0 && vsuf[theme_apply_sel][0] != '\0') {
+                // Delete this generated variant (not the original/base row).
+                snprintf(del_suffix, sizeof(del_suffix), "%s", vsuf[theme_apply_sel]);
+                screen = SCREEN_THEME_DELVARIANT; redraw_all = 1; continue;
+            }
+            if (rep & KEY_UP)   { if (theme_apply_sel > 0) { theme_apply_sel--; redraw_list = 1;
+                                    fb_rect(0, LIST_Y + (nrows+2)*(ROW_H+2)+8, ROW_W+4, 12, COL_BG); } }
+            if (rep & KEY_DOWN) { if (theme_apply_sel < nrows-1) { theme_apply_sel++; redraw_list = 1;
+                                    fb_rect(0, LIST_Y + (nrows+2)*(ROW_H+2)+8, ROW_W+4, 12, COL_BG); } }
+
+            // Footer: X (Delete) is only valid on a generated variant -- it dims on
+            // the original/base rows and on "Create new variant". Redraw when the
+            // deletable state changes (tracked in theme_hint_state).
+            {
+                int can_del = (vk[theme_apply_sel] == 0 && vsuf[theme_apply_sel][0] != '\0');
+                if (can_del != theme_hint_state) {
+                    Hint h[3] = { { NULL, 'A', "Select", 0, 0 },
+                                  { NULL, 'X', "Delete", 0, !can_del },
+                                  { NULL, 'B', "Back", 0, 0 } };
+                    draw_footer_hints(h, 3);
+                    theme_hint_state = can_del;
+                }
+            }
             if (down & KEY_A) {
                 int kind = vk[theme_apply_sel];
                 if (kind == 2) {
@@ -3564,63 +3805,30 @@ int main(void) {
                     adj_from_create = 1;
                     screen = SCREEN_THEME_ADJUST; redraw_all = 1; continue;
                 }
-                // Move the mark to this row and repaint immediately (before the
-                // slower settings.ini write) so the X feels instant.
-                applied_row = theme_apply_sel;
-                for (int r = 0; r < nrows; r++) {
-                    int is_sel = (r == theme_apply_sel);
-                    u16 col = is_sel ? COL_TEXT : COL_DIM;
-                    int y = LIST_Y + r * (ROW_H + 2);
-                    if (vk[r] == 2) {
-                        y += 2 * (ROW_H + 2);
-                        if (is_sel) fb_rect(LIST_X - 2, y - 1, ROW_W, ROW_H, COL_HILITE);
-                        int bx = fb_button(LIST_X, y - 1, '+', COL_BTN, is_sel ? COL_HILITE : COL_BG);
-                        fb_text(LIST_X + bx + 4, y + (BTN_D - GLYPH_H) / 2 - 1, vlabel_s[r], col);
-                    } else {
-                        if (is_sel) fb_rect(LIST_X - 2, y - 1, ROW_W, ROW_H, COL_HILITE);
-                        char line[48];
-                        snprintf(line, sizeof(line), "[%c] %s", r == applied_row ? 'X' : ' ', vlabel_s[r]);
-                        fb_text_clip(LIST_X, y, line, col, 26);
-                    }
-                }
-                swiWaitForVBlank();   // push the moved mark to screen now
-
-                // Message sits below the (down-shifted) Create new variant row.
+                // Show "Applying theme..." first WITHOUT moving the mark. The X
+                // moves only once the apply has completed (when "Theme applied."
+                // shows), so the selection box doesn't update prematurely.
                 int msg_y = LIST_Y + (nrows + 2) * (ROW_H + 2) + 10;
                 fb_rect(0, msg_y - 2, ROW_W + 4, 12, COL_BG);
                 fb_text(LIST_X, msg_y, "Applying theme...", COL_TEXT);
                 swiWaitForVBlank();
                 int rc = twl_set_theme(vfolder[theme_apply_sel]);
+                // Keep "Applying theme..." up through the settle hold -- the screen
+                // isn't interactive yet -- then flip to the result and move the X
+                // exactly when control returns to the user.
+                for (int f = 0; f < VARIANT_MSG_HOLD; f++) swiWaitForVBlank();
+                if (rc == 0) applied_row = theme_apply_sel;   // move mark now
+                draw_variant_list(t->name, nrows, vk, vlabel_s, theme_apply_sel,
+                                  applied_row, 1);
                 fb_rect(0, msg_y - 2, ROW_W + 4, 12, COL_BG);
                 fb_text(LIST_X, msg_y, rc == 0 ? "Theme applied." : "Could not update settings.",
                         rc == 0 ? rgb15(120,200,140) : COL_FAIL);
-                for (int f = 0; f < 150; f++) swiWaitForVBlank();   // ~2.5s
-                fb_rect(0, msg_y - 2, ROW_W + 4, 12, COL_BG);       // then clear it
-                redraw_list = 1;                                   // refresh marks
+                swiWaitForVBlank();
+                // Leave the result on screen; it clears on the next navigation.
             }
             if (redraw_list) {
-                fb_rect(0, LIST_BAND_Y, ROW_W + 4, LIST_BAND_H, COL_BG);
-                fb_text(LIST_X, PAGE_Y, t->name, COL_HEADER);
-                for (int r = 0; r < nrows; r++) {
-                    int is_sel = (r == theme_apply_sel);
-                    u16 col = is_sel ? COL_TEXT : COL_DIM;
-                    int y = LIST_Y + r * (ROW_H + 2);
-                    if (vk[r] == 2) {
-                        // "Create new variant": left-aligned with the variant rows,
-                        // pushed down ~2 rows for separation. The + glyph and the
-                        // label are vertically centered on each other.
-                        y += 2 * (ROW_H + 2);
-                        if (is_sel) fb_rect(LIST_X - 2, y - 1, ROW_W, ROW_H, COL_HILITE);
-                        int bx = fb_button(LIST_X, y - 1, '+', COL_BTN, is_sel ? COL_HILITE : COL_BG);
-                        fb_text(LIST_X + bx + 4, y + (BTN_D - GLYPH_H) / 2 - 1, vlabel_s[r], col);
-                    } else {
-                        if (is_sel) fb_rect(LIST_X - 2, y - 1, ROW_W, ROW_H, COL_HILITE);
-                        char line[48];
-                        snprintf(line, sizeof(line), "[%c] %s",
-                                 r == applied_row ? 'X' : ' ', vlabel_s[r]);
-                        fb_text_clip(LIST_X, y, line, col, 26);
-                    }
-                }
+                draw_variant_list(t->name, nrows, vk, vlabel_s, theme_apply_sel,
+                                  applied_row, 1);
                 redraw_list = 0;
             }
         }
@@ -3649,6 +3857,7 @@ int main(void) {
             }
             if (down & KEY_B) {
                 theme_page = 0; theme_sel = 0; theme_top = 0;  // compatible list
+                theme_want_made_base = 1;                      // hover converted theme
                 screen = SCREEN_THEMES; redraw_all = 1; continue;
             }
             if (down & KEY_A) {
@@ -3665,15 +3874,129 @@ int main(void) {
                     fb_text(px + (PW - (int)strlen("Theme applied!")*6)/2, py + 18, "Theme applied!", rgb15(120,200,140));
                     fb_text(px + (PW - (int)strlen("Theme Builder will now close.")*6)/2, py + 34, "Theme Builder will now close.", COL_DIM);
                     // Hold for ~2 seconds, then return to the themes screen.
-                    for (int f = 0; f < 120; f++) swiWaitForVBlank();
+                    for (int f = 0; f < CLOSE_MSG_HOLD; f++) swiWaitForVBlank();
                 } else {
                     fb_text(px + (PW - (int)strlen("Could not update settings.")*6)/2, py + 26, "Could not update settings.", COL_FAIL);
-                    for (int f = 0; f < 90; f++) swiWaitForVBlank();
+                    for (int f = 0; f < APPLIED_MSG_HOLD; f++) swiWaitForVBlank();
                 }
                 theme_page = 0; theme_sel = 0; theme_top = 0;  // back to compatible list
-                theme_want_current = 1;                        // highlight the applied theme
+                theme_want_made_base = 1;                      // hover converted theme
                 screen = SCREEN_THEMES; redraw_all = 1;
                 continue;
+            }
+        }
+        else if (screen == SCREEN_THEME_DELVARIANT) {
+            // Confirm deleting a single generated variant.
+            ThemeEntry *t = (theme_made_idx >= 0) ? &g_themes[theme_made_idx] : NULL;
+            if (!t) { screen = SCREEN_THEME_APPLY; redraw_all = 1; continue; }
+            if (redraw_all) {
+                fb_dim_rect(0, 0, SCR_W, SCR_H);
+                const int PW = 240, PH = 72;
+                int px = (SCR_W - PW)/2, py = (SCR_H - PH)/2;
+                fb_rect(px-1, py-1, PW+2, PH+2, rgb15(90,90,105));
+                fb_rect(px, py, PW, PH, COL_BG);
+
+                // Title, then "<Theme> - <variant>" below it in the teal accent,
+                // matching the delete-theme screen's spacing (14px gap).
+                const char *m1 = "Delete this variant?";
+                int hdr_y = py + 12;
+                fb_text(px + (PW - (int)strlen(m1)*6)/2, hdr_y, m1, COL_TEXT);
+                char vlbl[40]; variant_label(del_suffix, vlbl, sizeof(vlbl));
+                char full[80];
+                snprintf(full, sizeof(full), "%s - %s", t->name, vlbl);
+                int maxch = (PW - 12) / 6;
+                if ((int)strlen(full) > maxch && maxch > 1) { full[maxch-1]='.'; full[maxch]='\0'; }
+                fb_text(px + (PW - (int)strlen(full)*6)/2, hdr_y + 14, full, COL_HEADER);
+
+                // Buttons sit the same distance below the name as the delete-theme
+                // buttons sit below their body text (18px).
+                int by = hdr_y + 14 + 18, tyb = by + (BTN_D - GLYPH_H)/2;
+                int wC = (int)strlen("Confirm")*6, wX = (int)strlen("Cancel")*6;
+                int roww = 30 + 4 + wC + 16 + BTN_D + 4 + wX;
+                int hx = px + (PW - roww)/2;
+                hx += fb_pill(hx, by, "START", COL_BTN, COL_BG) + 4;
+                fb_text(hx, tyb, "Confirm", COL_DIM); hx += wC + 16;
+                hx += fb_button(hx, by, 'B', COL_BTN, COL_BG) + 4;
+                fb_text(hx, tyb, "Cancel", COL_DIM);
+                redraw_all = 0;
+            }
+            if (down & KEY_B) { screen = SCREEN_THEME_APPLY; redraw_all = 1; continue; }
+            if (down & KEY_START) {
+                // If the variant being deleted is the currently-applied theme,
+                // revert to the base (original) theme so DSI_THEME stays valid.
+                char applied[THEME_NAMELEN]; char delf[THEME_NAMELEN + VARSUF_LEN];
+                snprintf(delf, sizeof(delf), "%s%s", t->name, del_suffix);
+                if (twl_get_theme(applied, sizeof(applied)) == 0 &&
+                    strcmp(applied, delf) == 0) {
+                    twl_set_theme(t->name);   // revert to original base theme
+                }
+                delete_variant(t->name, del_suffix);
+                build_theme_list();
+                theme_list_dirty = 1;
+                // Re-find the base (index may shift); if it vanished, go to list.
+                int bi = -1;
+                for (int i = 0; i < g_n_themes; i++)
+                    if (strcmp(g_themes[i].name, t->name) == 0) { bi = i; break; }
+                if (bi < 0) { screen = SCREEN_THEMES; redraw_all = 1; continue; }
+                theme_made_idx = bi;
+                theme_apply_sel = 0;
+                screen = SCREEN_THEME_APPLY; redraw_all = 1; continue;
+            }
+        }
+        else if (screen == SCREEN_THEME_DELTHEME) {
+            // Confirm deleting an entire theme (original + all variants).
+            ThemeEntry *t = (theme_made_idx >= 0) ? &g_themes[theme_made_idx] : NULL;
+            if (!t) { screen = SCREEN_THEMES; redraw_all = 1; continue; }
+            if (redraw_all) {
+                fb_dim_rect(0, 0, SCR_W, SCR_H);
+                const int PW = 244, PH = 98;
+                int px = (SCR_W - PW)/2, py = (SCR_H - PH)/2;
+                fb_rect(px-1, py-1, PW+2, PH+2, rgb15(90,90,105));
+                fb_rect(px, py, PW, PH, COL_BG);
+
+                // Title, then the theme name below it in the teal accent.
+                const char *m1 = "Delete this theme?";
+                int hdr_y = py + 12;
+                fb_text(px + (PW - (int)strlen(m1)*6)/2, hdr_y, m1, COL_TEXT);
+                char nm[28]; snprintf(nm, sizeof(nm), "%s", t->name);
+                if ((int)strlen(t->name) > 26) { nm[25]='.'; nm[26]='\0'; }
+                fb_text(px + (PW - (int)strlen(nm)*6)/2, hdr_y + 14, nm, COL_HEADER);
+
+                // Body, centered, with breathing room below the name.
+                const char *b1 = "This removes the original theme";
+                const char *b2 = "files and all created variants.";
+                int body_y = hdr_y + 14 + 18;
+                fb_text(px + (PW - (int)strlen(b1)*6)/2, body_y,      b1, COL_DIM);
+                fb_text(px + (PW - (int)strlen(b2)*6)/2, body_y + 12, b2, COL_DIM);
+
+                // Buttons keep a fixed gap below the body.
+                int by = body_y + 12 + 18, tyb = by + (BTN_D - GLYPH_H)/2;
+                int wC = (int)strlen("Confirm")*6, wX = (int)strlen("Cancel")*6;
+                int roww = 30 + 4 + wC + 16 + BTN_D + 4 + wX;
+                int hx = px + (PW - roww)/2;
+                hx += fb_pill(hx, by, "START", COL_BTN, COL_BG) + 4;
+                fb_text(hx, tyb, "Confirm", COL_DIM); hx += wC + 16;
+                hx += fb_button(hx, by, 'B', COL_BTN, COL_BG) + 4;
+                fb_text(hx, tyb, "Cancel", COL_DIM);
+                redraw_all = 0;
+            }
+            if (down & KEY_B) { screen = SCREEN_THEMES; redraw_all = 1; continue; }
+            if (down & KEY_START) {
+                // If the applied theme is this theme (its base or any of its
+                // variants), revert to Default before removing the files.
+                char applied[THEME_NAMELEN];
+                if (twl_get_theme(applied, sizeof(applied)) == 0) {
+                    size_t bl = strlen(t->name);
+                    if (strncmp(applied, t->name, bl) == 0 &&
+                        (applied[bl] == '\0' || applied[bl] == ' ')) {
+                        twl_set_theme(DEFAULT_THEME_NAME);
+                    }
+                }
+                delete_theme_all(t->name);
+                build_theme_list();
+                theme_list_dirty = 1;
+                theme_sel = 0; theme_top = 0;
+                screen = SCREEN_THEMES; redraw_all = 1; continue;
             }
         }
         else if (screen == SCREEN_CONFIRM_DELETE) {
